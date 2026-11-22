@@ -2,7 +2,7 @@
 // distribution points over HTTPS into src-tauri/binaries/ using the
 // Tauri sidecar naming convention: <name>-<target-triple>[.exe].
 // Idempotent: skips engines that are already present.
-import { copyFileSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync } from "node:fs";
+import { copyFileSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
@@ -34,7 +34,7 @@ const SOURCES = {
     darwin: ["https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos"],
     linux: ["https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux"],
   },
-  aria2: {
+  aria2c: {
     win32: [
       {
         url: "https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip",
@@ -78,12 +78,20 @@ async function fetchEngine(name, spec, outFile) {
   const entry = entries[0];
   if (typeof entry === "object" && entry.system) {
     // Fall back to the system binary (CI installs it via brew/apt).
-    const found = execFileSync(process.platform === "win32" ? "where" : "which", [entry.system], { encoding: "utf8" })
+    // Pure copy: never move or delete anything outside our own dir.
+    const found = execFileSync(
+      process.platform === "win32" ? "where" : "which",
+      [entry.system],
+      { encoding: "utf8" },
+    )
       .split(/\r?\n/)[0]
       ?.trim();
     if (!found) throw new Error(`system binary ${entry.system} not found — install it first`);
     console.log(`[system] ${name} ← ${found}`);
-    copyBin(found, outFile);
+    rmSync(outFile, { force: true });
+    mkdirSync(dirname(outFile), { recursive: true });
+    copyFileSync(found, outFile);
+    if (!existsSync(outFile)) throw new Error(`copy failed: ${found} → ${outFile}`);
     return true;
   }
   const url = typeof entry === "string" ? entry : entry.url;
@@ -156,6 +164,20 @@ for (const [name, spec] of Object.entries(SOURCES)) {
     continue;
   }
   results[name] = (await fetchEngine(name, spec, outFile)) ? "downloaded" : "skipped";
+}
+
+// Sanity check: every engine the build script expects must exist on disk.
+for (const [name, state] of Object.entries(results)) {
+  if (state === "present" || state === "downloaded") {
+    const outFile = join(BIN_DIR, ext(`${name}-${TRIPLE}`));
+    if (!existsSync(outFile)) {
+      throw new Error(`post-check failed: ${name} missing at ${outFile}`);
+    }
+    const size = statSync(outFile).size;
+    if (size < 100_000) {
+      throw new Error(`post-check failed: ${name} suspiciously small (${size} bytes)`);
+    }
+  }
 }
 
 console.log(JSON.stringify(results));

@@ -198,3 +198,17 @@ pub async fn update_ytdlp(app: tauri::AppHandle) -> CmdResult<String> {
         .await
         .map_err(|e| CommandError::of("engineUpdate", e))
 }
+
+#[tauri::command]
+pub async fn set_parallel(queue: State<'_, QueueManager>, n: u32) -> CmdResult<()> {
+    queue::set_parallel(queue, n)
+        .await
+        .map_err(|e| CommandError::of("settings", e))
+}
+
+#[tauri::command]
+pub async fn set_speed_limit(app: tauri::AppHandle, limit: String) -> CmdResult<()> {
+    queue::set_speed_limit(app, limit)
+        .await
+        .map_err(|e| CommandError::of("settings", e))
+}

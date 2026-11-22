@@ -16,6 +16,7 @@ import { Presets } from "@/pages/Presets";
 import { Settings } from "@/pages/Settings";
 import { Video } from "@/pages/Video";
 import { useQueueStore } from "@/stores/queue";
+import { useSettingsStore } from "@/stores/settings";
 import { bootstrapUi } from "@/stores/ui";
 
 const PAGE_STORAGE_KEY = "gruzly.page";
@@ -45,12 +46,14 @@ export default function App() {
 
   // Attach Rust event listeners once (StrictMode double-mount safe).
   const attach = useQueueStore((s) => s.attach);
+  const hydrateSettings = useSettingsStore((s) => s.hydrateFromBackend);
   useEffect(() => {
     const detachPromise = attach();
+    void hydrateSettings();
     return () => {
       void detachPromise.then((detach) => detach());
     };
-  }, [attach]);
+  }, [attach, hydrateSettings]);
 
   useEffect(() => {
     document.title = `${t("app.name")} — ${t(`nav.${page}`)}`;

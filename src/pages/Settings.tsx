@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   Badge,
   Button,
@@ -17,10 +18,16 @@ import {
   Switch,
   toast,
 } from "@/components/ui";
-import { getEngineInfo, type EngineInfo } from "@/lib/api";
+import { getEngineInfo, updateYtdlp, type EngineInfo } from "@/lib/api";
 import { LANGUAGES } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { useUiStore, type AccentColor, type Density, type ThemeMode } from "@/stores/ui";
+import {
+  BROWSERS,
+  proxyUrl,
+  useSettingsStore,
+} from "@/stores/settings";
+import { useHotkeysStore } from "@/stores/hotkeys";
 
 type SectionId =
   | "general"
@@ -45,7 +52,6 @@ export function Settings() {
 
   return (
     <div className="mx-auto flex h-full w-full max-w-5xl gap-6 px-6 py-6">
-      {/* Breadcrumb-style section rail */}
       <nav aria-label={t("settings.title")} className="w-44 shrink-0">
         <p className="mb-2 px-2 text-2xs font-medium uppercase tracking-wide text-text-disabled">
           {t("settings.title")}
@@ -133,51 +139,60 @@ function Card({ title, children }: { title?: string; children: React.ReactNode }
 
 function GeneralSection() {
   const { t } = useTranslation();
+  const settings = useSettingsStore();
   const [notifications, setNotifications] = useState(true);
-  const [startup, setStartup] = useState(false);
   const [closeToTray, setCloseToTray] = useState(true);
 
+  const pickFolder = async () => {
+    try {
+      const picked = await openDialog({ directory: true, multiple: false });
+      if (typeof picked === "string") {
+        settings.update({ downloadFolder: picked });
+        toast.success(t("toasts.settingsSaved"));
+      }
+    } catch {
+      /* browser mode or dialog cancelled */
+    }
+  };
+
   return (
-    <>
-      <Card>
-        <Row label={t("settings.general.folder")} stacked>
-          <div className="flex items-center gap-2">
-            <Input
-              value="" // M3 binds the real folder picker + store
-              readOnly
-              placeholder="~/Downloads"
-              className="flex-1"
-              aria-label={t("settings.general.folder")}
-            />
-            <Button variant="secondary">{t("settings.general.choose")}</Button>
-          </div>
-        </Row>
-        <Row label={t("settings.general.startup")} hint={t("settings.general.startupHint")}>
-          <Switch
-            checked={startup}
-            onCheckedChange={(v) => {
-              setStartup(v);
-              toast.success(t("toasts.settingsSaved"));
-            }}
-            label={t("settings.general.startup")}
+    <Card>
+      <Row label={t("settings.general.folder")} stacked>
+        <div className="flex items-center gap-2">
+          <Input
+            value={settings.downloadFolder}
+            onChange={(e) => settings.update({ downloadFolder: e.target.value })}
+            placeholder={t("presets.fields.folderPlaceholder")}
+            className="flex-1"
+            aria-label={t("settings.general.folder")}
           />
-        </Row>
-        <Row label={t("settings.general.tray")} hint={t("settings.general.trayHint")}>
-          <Switch
-            checked={closeToTray}
-            onCheckedChange={setCloseToTray}
-            label={t("settings.general.tray")}
-          />
-        </Row>
-        <Row label={t("settings.general.notifications")} hint={t("settings.general.notificationsHint")}>
-          <Switch
-            checked={notifications}
-            onCheckedChange={setNotifications}
-            label={t("settings.general.notifications")}
-          />
-        </Row>
-      </Card>
-    </>
+          <Button variant="secondary" onClick={() => void pickFolder()}>
+            {t("settings.general.choose")}
+          </Button>
+        </div>
+      </Row>
+      <Row label={t("settings.engines.autoUpdate")} hint={t("settings.engines.autoUpdateHint")}>
+        <Switch
+          checked={settings.enginesAutoUpdate}
+          onCheckedChange={(v) => settings.update({ enginesAutoUpdate: v })}
+          label={t("settings.engines.autoUpdate")}
+        />
+      </Row>
+      <Row label={t("settings.general.tray")} hint={t("settings.general.trayHint")}>
+        <Switch
+          checked={closeToTray}
+          onCheckedChange={setCloseToTray}
+          label={t("settings.general.tray")}
+        />
+      </Row>
+      <Row label={t("settings.general.notifications")} hint={t("settings.general.notificationsHint")}>
+        <Switch
+          checked={notifications}
+          onCheckedChange={setNotifications}
+          label={t("settings.general.notifications")}
+        />
+      </Row>
+    </Card>
   );
 }
 
@@ -191,7 +206,7 @@ const ACCENTS: { id: AccentColor; swatch: string; labelKey: string }[] = [
 ];
 
 function AppearanceSection() {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const { themeMode, setThemeMode, language, setLanguage, accent, setAccent, density, setDensity } =
     useUiStore();
 
@@ -250,7 +265,6 @@ function AppearanceSection() {
           ))}
         </div>
       </Card>
-      <p className="text-2xs text-text-disabled">i18n · {i18n.language}</p>
     </>
   );
 }
@@ -259,53 +273,49 @@ function AppearanceSection() {
 
 function DownloadsSection() {
   const { t } = useTranslation();
-  const [parallel, setParallel] = useState("3");
-  const [connections, setConnections] = useState("8");
-  const [speedLimit, setSpeedLimit] = useState("");
-  const [template, setTemplate] = useState("{{title}}.{{ext}}");
+  const settings = useSettingsStore();
 
   return (
-    <Card>
-      <Row label={t("settings.downloads.parallel")}>
-        <Input
-          type="number"
-          min={1}
-          max={16}
-          value={parallel}
-          onChange={(e) => setParallel(e.target.value)}
-          className="w-24 tnum"
-          aria-label={t("settings.downloads.parallel")}
-        />
-      </Row>
-      <Row label={t("settings.downloads.connections")} hint={t("settings.downloads.connectionsHint")}>
-        <Input
-          type="number"
-          min={1}
-          max={16}
-          value={connections}
-          onChange={(e) => setConnections(e.target.value)}
-          className="w-24 tnum"
-          aria-label={t("settings.downloads.connections")}
-        />
-      </Row>
-      <Row label={t("settings.downloads.speedLimit")}>
-        <Input
-          value={speedLimit}
-          onChange={(e) => setSpeedLimit(e.target.value)}
-          placeholder={t("settings.downloads.unlimited")}
-          className="w-40 tnum"
-          aria-label={t("settings.downloads.speedLimit")}
-        />
-      </Row>
-      <Row label={t("settings.downloads.filenameTemplate")} hint={t("settings.downloads.templateHint")} stacked>
-        <Input
-          value={template}
-          onChange={(e) => setTemplate(e.target.value)}
-          className="tnum"
-          aria-label={t("settings.downloads.filenameTemplate")}
-        />
-      </Row>
-    </Card>
+    <>
+      <Card>
+        <Row label={t("settings.downloads.parallel")}>
+          <Segmented
+            value={String(settings.parallel)}
+            onValueChange={(v) => settings.update({ parallel: Number(v) })}
+            options={["1", "2", "3", "5", "8"].map((n) => ({ value: n, label: n }))}
+            ariaLabel={t("settings.downloads.parallel")}
+          />
+        </Row>
+        <Row label={t("settings.downloads.speedLimit")} stacked>
+          <div className="flex items-center gap-2">
+            <Input
+              value={settings.speedLimit}
+              onChange={(e) => settings.update({ speedLimit: e.target.value.trim() })}
+              placeholder={t("settings.downloads.unlimited")}
+              className="w-40 tnum"
+              aria-label={t("settings.downloads.speedLimit")}
+            />
+            <span className="text-2xs text-text-disabled">KB/s · MB/s · unlimited</span>
+          </div>
+        </Row>
+        <Row label={t("settings.downloads.filenameTemplate")} hint={t("settings.downloads.templateHint")} stacked>
+          <Input
+            value={settings.filenameTemplate}
+            onChange={(e) => settings.update({ filenameTemplate: e.target.value })}
+            className="tnum"
+            aria-label={t("settings.downloads.filenameTemplate")}
+          />
+        </Row>
+        <Row label={t("settings.downloads.seedRatio")} hint={t("settings.downloads.seedRatioHint")}>
+          <Input
+            value={settings.seedRatio}
+            onChange={(e) => settings.update({ seedRatio: e.target.value })}
+            className="w-24 tnum"
+            aria-label={t("settings.downloads.seedRatio")}
+          />
+        </Row>
+      </Card>
+    </>
   );
 }
 
@@ -314,13 +324,27 @@ function DownloadsSection() {
 function EnginesSection() {
   const { t } = useTranslation();
   const [engines, setEngines] = useState<EngineInfo[] | null>(null);
-  const [autoUpdate, setAutoUpdate] = useState(true);
+  const [updating, setUpdating] = useState(false);
+  const settings = useSettingsStore();
 
   useEffect(() => {
     void getEngineInfo()
       .then(setEngines)
       .catch(() => setEngines([]));
   }, []);
+
+  const runUpdate = async () => {
+    setUpdating(true);
+    try {
+      await updateYtdlp();
+      toast.success(t("toasts.enginesUpdated"));
+      void getEngineInfo().then(setEngines);
+    } catch {
+      toast.error(t("errors.generic"));
+    } finally {
+      setUpdating(false);
+    }
+  };
 
   return (
     <>
@@ -338,9 +362,6 @@ function EnginesSection() {
               ) : (
                 <Badge tone="danger">{t("settings.engines.missing")}</Badge>
               )}
-              <Button size="sm" variant="secondary" disabled={!e.present}>
-                {t("settings.engines.update")}
-              </Button>
             </div>
           </Row>
         ))}
@@ -351,7 +372,17 @@ function EnginesSection() {
       </Card>
       <Card>
         <Row label={t("settings.engines.autoUpdate")} hint={t("settings.engines.autoUpdateHint")}>
-          <Switch checked={autoUpdate} onCheckedChange={setAutoUpdate} label={t("settings.engines.autoUpdate")} />
+          <Switch
+            checked={settings.enginesAutoUpdate}
+            onCheckedChange={(v) => settings.update({ enginesAutoUpdate: v })}
+            label={t("settings.engines.autoUpdate")}
+          />
+        </Row>
+        <Row label={t("settings.engines.updateAll")}>
+          <Button size="sm" variant="secondary" onClick={() => void runUpdate()} disabled={updating}>
+            <RefreshCw className={cn("h-3.5 w-3.5", updating && "animate-spin")} aria-hidden />
+            {updating ? t("common.updating") : t("settings.engines.updateAll")}
+          </Button>
         </Row>
         <Row label={t("settings.engines.checkNow")}>
           <Button
@@ -364,7 +395,6 @@ function EnginesSection() {
               });
             }}
           >
-            <RefreshCw className="h-3.5 w-3.5" aria-hidden />
             {t("settings.engines.checkNow")}
           </Button>
         </Row>
@@ -377,50 +407,79 @@ function EnginesSection() {
 
 function IntegrationsSection() {
   const { t } = useTranslation();
-  const [cookies, setCookies] = useState(false);
-  const [sponsorblock, setSponsorblock] = useState(true);
-  const [proxy, setProxy] = useState(false);
+  const settings = useSettingsStore();
 
   return (
     <>
       <Card>
         <Row label={t("settings.integrations.cookies")} hint={t("settings.integrations.cookiesHint")}>
-          <Switch checked={cookies} onCheckedChange={setCookies} label={t("settings.integrations.cookies")} />
+          <Switch
+            checked={settings.cookiesEnabled}
+            onCheckedChange={(v) => settings.update({ cookiesEnabled: v })}
+            label={t("settings.integrations.cookies")}
+          />
         </Row>
-        {cookies && (
+        {settings.cookiesEnabled && (
           <Row label={t("settings.integrations.cookiesBrowser")} stacked>
             <select
+              value={settings.cookiesBrowser}
+              onChange={(e) => settings.update({ cookiesBrowser: e.target.value })}
               className="h-9 w-full rounded-lg border border-border bg-surface-2 px-2.5 text-xs text-text focus:border-accent focus:outline-none"
               aria-label={t("settings.integrations.cookiesBrowser")}
             >
-              <option>Chrome</option>
-              <option>Firefox</option>
-              <option>Edge</option>
-              <option>Brave</option>
+              {BROWSERS.map((b) => (
+                <option key={b} value={b}>
+                  {b}
+                </option>
+              ))}
             </select>
           </Row>
         )}
         <Row label={t("settings.integrations.sponsorblock")} hint={t("settings.integrations.sponsorblockHint")}>
-          <Switch checked={sponsorblock} onCheckedChange={setSponsorblock} label={t("settings.integrations.sponsorblock")} />
+          <Switch
+            checked={settings.sponsorblock}
+            onCheckedChange={(v) => settings.update({ sponsorblock: v })}
+            label={t("settings.integrations.sponsorblock")}
+          />
         </Row>
       </Card>
       <Card title={t("settings.integrations.proxy")}>
         <Row label={t("settings.integrations.proxy")}>
-          <Switch checked={proxy} onCheckedChange={setProxy} label={t("settings.integrations.proxy")} />
+          <Switch
+            checked={settings.proxyEnabled}
+            onCheckedChange={(v) => settings.update({ proxyEnabled: v })}
+            label={t("settings.integrations.proxy")}
+          />
         </Row>
-        {proxy && (
+        {settings.proxyEnabled && (
           <Row stacked>
             <div className="grid grid-cols-3 gap-2">
               <select
+                value={settings.proxyType}
+                onChange={(e) => settings.update({ proxyType: e.target.value as "HTTP" | "SOCKS5" })}
                 className="h-9 rounded-lg border border-border bg-surface-2 px-2.5 text-xs text-text focus:border-accent focus:outline-none"
                 aria-label={t("settings.integrations.proxyType")}
               >
                 <option>HTTP</option>
                 <option>SOCKS5</option>
               </select>
-              <Input placeholder={t("settings.integrations.proxyHost")} aria-label={t("settings.integrations.proxyHost")} />
-              <Input placeholder={t("settings.integrations.proxyPort")} aria-label={t("settings.integrations.proxyPort")} className="tnum" />
+              <Input
+                value={settings.proxyHost}
+                onChange={(e) => settings.update({ proxyHost: e.target.value })}
+                placeholder={t("settings.integrations.proxyHost")}
+                aria-label={t("settings.integrations.proxyHost")}
+              />
+              <Input
+                value={settings.proxyPort}
+                onChange={(e) => settings.update({ proxyPort: e.target.value })}
+                placeholder={t("settings.integrations.proxyPort")}
+                aria-label={t("settings.integrations.proxyPort")}
+                className="tnum"
+              />
             </div>
+            {proxyUrl(settings) && (
+              <p className="tnum text-2xs text-text-disabled">{proxyUrl(settings)}</p>
+            )}
           </Row>
         )}
       </Card>
@@ -431,26 +490,65 @@ function IntegrationsSection() {
 /* ------------------------------- Hotkeys ------------------------------- */
 
 const HOTKEY_ROWS = [
-  { id: "palette", labelKey: "settings.hotkeys.actions.palette", combo: "Ctrl+K" },
-  { id: "paste", labelKey: "settings.hotkeys.actions.paste", combo: "Ctrl+V" },
-  { id: "openDownloads", labelKey: "settings.hotkeys.actions.openDownloads", combo: "Ctrl+2" },
-  { id: "openVideo", labelKey: "settings.hotkeys.actions.openVideo", combo: "Ctrl+3" },
-  { id: "toggleTheme", labelKey: "settings.hotkeys.actions.toggleTheme", combo: "Ctrl+Shift+L" },
-];
+  { id: "palette", labelKey: "settings.hotkeys.actions.palette", defaultCombo: "Ctrl+K" },
+  { id: "paste", labelKey: "settings.hotkeys.actions.paste", defaultCombo: "Ctrl+V" },
+  { id: "openDownloads", labelKey: "settings.hotkeys.actions.openDownloads", defaultCombo: "Ctrl+2" },
+  { id: "openVideo", labelKey: "settings.hotkeys.actions.openVideo", defaultCombo: "Ctrl+3" },
+  { id: "toggleTheme", labelKey: "settings.hotkeys.actions.toggleTheme", defaultCombo: "Ctrl+Shift+L" },
+] as const;
+
+type HotkeyId = (typeof HOTKEY_ROWS)[number]["id"];
 
 function HotkeysSection() {
   const { t } = useTranslation();
+  const { hotkeys, reassign, reset } = useHotkeysStore();
+  const [listening, setListening] = useState<HotkeyId | null>(null);
+
+  useEffect(() => {
+    if (!listening) return;
+    const capture = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "Escape") {
+        setListening(null);
+        return;
+      }
+      if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return;
+      reassign(listening, { ctrl: e.ctrlKey, shift: e.shiftKey, alt: e.altKey, key: e.key });
+      setListening(null);
+    };
+    window.addEventListener("keydown", capture, true);
+    return () => window.removeEventListener("keydown", capture, true);
+  }, [listening, reassign]);
+
   return (
     <>
       <p className="mb-3 text-2xs text-text-muted">{t("settings.hotkeys.hint")}</p>
       <Card>
-        {HOTKEY_ROWS.map((row) => (
-          <Row key={row.id} label={t(row.labelKey)}>
-            <kbd className="tnum rounded-md border border-border bg-surface-2 px-2 py-1 text-2xs text-text-secondary">
-              {row.combo}
-            </kbd>
-          </Row>
-        ))}
+        {HOTKEY_ROWS.map((row) => {
+          const combo = hotkeys[row.id] ?? row.defaultCombo;
+          return (
+            <Row key={row.id} label={t(row.labelKey)}>
+              <button
+                onClick={() => setListening(row.id)}
+                className={cn(
+                  "tnum min-w-24 rounded-md border px-2 py-1 text-2xs transition-colors",
+                  listening === row.id
+                    ? "border-accent bg-accent/10 text-accent-text"
+                    : "border-border bg-surface-2 text-text-secondary hover:border-border-strong hover:text-text",
+                )}
+              >
+                {listening === row.id ? t("settings.hotkeys.pressNew") : combo}
+              </button>
+            </Row>
+          );
+        })}
+        <Row label={t("settings.hotkeys.reset")}>
+          <Button size="sm" variant="ghost" onClick={reset}>
+            <RefreshCw className="h-3.5 w-3.5" aria-hidden />
+            {t("settings.hotkeys.reset")}
+          </Button>
+        </Row>
       </Card>
     </>
   );

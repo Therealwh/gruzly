@@ -377,6 +377,12 @@ pub struct VideoDownloadSpec {
     pub embed_subtitles: bool,
     pub sponsorblock: bool,
     pub cookies_browser: Option<String>,
+    /// e.g. "5M" — yt-dlp --limit-rate
+    #[serde(default)]
+    pub limit_rate: Option<String>,
+    /// e.g. "http://127.0.0.1:8080" — yt-dlp --proxy
+    #[serde(default)]
+    pub proxy: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -457,6 +463,20 @@ pub fn download_args(
         if !browser.is_empty() {
             args.push("--cookies-from-browser".into());
             args.push(browser.clone());
+        }
+    }
+
+    if let Some(rate) = &spec.limit_rate {
+        if !rate.is_empty() {
+            args.push("--limit-rate".into());
+            args.push(rate.clone());
+        }
+    }
+
+    if let Some(proxy) = &spec.proxy {
+        if !proxy.is_empty() {
+            args.push("--proxy".into());
+            args.push(proxy.clone());
         }
     }
 

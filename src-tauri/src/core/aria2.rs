@@ -231,6 +231,16 @@ impl Aria2Daemon {
         .await
         .map(|_| ())
     }
+
+    /// Live global option change (e.g. max-overall-download-limit).
+    /// aria2.changeGlobalOption takes an options dict.
+    pub async fn set_global_option(&self, key: &str, value: &str) -> Result<(), Aria2Error> {
+        let mut opts = serde_json::Map::new();
+        opts.insert(key.to_string(), json!(value));
+        self.rpc("changeGlobalOption", self.authed(json!([opts])))
+            .await
+            .map(|_| ())
+    }
 }
 
 fn free_port() -> Result<u16, Aria2Error> {

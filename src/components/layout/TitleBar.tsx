@@ -2,6 +2,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Minus, Square, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { isTauri } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 /** Frameless-window title bar with drag region and native-feeling controls. */
@@ -10,6 +11,7 @@ export function TitleBar() {
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
+    if (!isTauri()) return; // plain-browser preview: no native window
     const win = getCurrentWindow();
     let disposed = false;
     const sync = () => {
@@ -28,6 +30,18 @@ export function TitleBar() {
   const minimize = () => void getCurrentWindow().minimize();
   const toggleMaximize = () => void getCurrentWindow().toggleMaximize();
   const close = () => void getCurrentWindow().close();
+
+  if (!isTauri()) {
+    // Browser preview: drag region only, no native window controls.
+    return (
+      <header
+        data-tauri-drag-region
+        className="drag-region flex h-10 shrink-0 items-center justify-end border-b border-border bg-bg-veil glass pr-3"
+      >
+        <span className="text-2xs text-text-disabled">browser preview</span>
+      </header>
+    );
+  }
 
   return (
     <header

@@ -3,9 +3,13 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "@/components/ui";
+import { pauseJob, removeJob, resumeJob, updateYtdlp } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { NAV_ITEMS, type PageId } from "@/lib/navigation";
 import { t } from "@/lib/i18n";
+import { useHotkeysStore, parseCombo } from "@/stores/hotkeys";
+import { useQueueStore } from "@/stores/queue";
 
 type PaletteCommand = {
   id: string;
@@ -16,8 +20,8 @@ type PaletteCommand = {
 };
 
 /**
- * Command palette (Ctrl+K / Cmd+K). M0 ships navigation + theme actions;
- * queue and engine commands register here as milestones land.
+ * Command palette (Ctrl+K / Cmd+K): navigation, theme, queue and engine
+ * actions. Global shortcuts honor the hotkeys bindings from Settings.
  */
 export function CommandPalette({
   onNavigate,
@@ -52,11 +56,65 @@ export function CommandPalette({
         run: toggleSidebar,
       },
       {
-        id: "action.paste",
+        id: "action.pauseAll",
         group: "actions",
-        label: t("settings.hotkeys.actions.paste"),
-        hint: "Ctrl+V",
-        run: () => onNavigate("dashboard"),
+        label: t("settings.hotkeys.actions.pauseAll"),
+        run: () => {
+          void (async () => {
+            const { jobs, order } = useQueueStore.getState();
+            const active = order
+              .map((id) => jobs.get(id))
+              .filter((j) => j && j.status === "downloading");
+            for (const j of active) {
+              if (j) await pauseJob(j.id).catch(() => undefined);
+            }
+            toast.success(t("settings.hotkeys.actions.pauseAll"));
+          })();
+        },
+      },
+      {
+        id: "action.resumeAll",
+        group: "actions",
+        label: t("settings.hotkeys.actions.resumeAll"),
+        run: () => {
+          void (async () => {
+            const { jobs, order } = useQueueStore.getState();
+            const paused = order
+              .map((id) => jobs.get(id))
+              .filter((j) => j && j.status === "paused");
+            for (const j of paused) {
+              if (j) await resumeJob(j.id).catch(() => undefined);
+            }
+            toast.success(t("settings.hotkeys.actions.resumeAll"));
+          })();
+        },
+      },
+      {
+        id: "action.clearFinished",
+        group: "actions",
+        label: t("downloads.tabs.completed"),
+        hint: t("common.clearAll"),
+        run: () => {
+          void (async () => {
+            const { jobs, order } = useQueueStore.getState();
+            const finished = order
+              .map((id) => jobs.get(id))
+              .filter((j) => j && ["completed", "failed", "canceled"].includes(j.status));
+            for (const j of finished) {
+              if (j) await removeJob(j.id).catch(() => undefined);
+            }
+          })();
+        },
+      },
+      {
+        id: "action.updateEngines",
+        group: "actions",
+        label: t("dashboard.engines.updateAll"),
+        run: () => {
+          void updateYtdlp()
+            .then(() => toast.success(t("toasts.enginesUpdated")))
+            .catch(() => toast.error(t("errors.generic")));
+        },
       },
     ],
     [t, onNavigate, setThemeMode, resolvedTheme, toggleSidebar],
@@ -174,27 +232,53 @@ export function CommandPalette({
   );
 }
 
-/** Global shortcut wiring: palette, navigation, theme toggle. */
+/** Global shortcut wiring — honors user-reassigned bindings. */
 export function useGlobalHotkeys(onNavigate: (p: PageId) => void) {
   const { togglePalette, setThemeMode, resolvedTheme } = useUiStore();
+  const hotkeys = useHotkeysStore((s) => s.hotkeys);
+
   useEffect(() => {
+    const bindings = Object.entries(hotkeys)
+      .map(([id, label]) => ({ id, combo: parseCombo(label) }))
+      .filter((b): b is { id: string; combo: NonNullable<ReturnType<typeof parseCombo>> } => b.combo !== null);
+
     const handler = (e: KeyboardEvent) => {
-      const mod = e.ctrlKey || e.metaKey;
-      if (mod && e.key.toLowerCase() === "k") {
+      // Ignore key events while typing in inputs (except palette toggle).
+      const target = e.target as HTMLElement | null;
+      const inField =
+        target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.isContentEditable;
+
+      for (const { id, combo } of bindings) {
+        const keyMatch =
+          e.key === combo.key ||
+          (combo.key.length === 1 && e.key.toUpperCase() === combo.key.toUpperCase());
+        if (!keyMatch || e.ctrlKey !== combo.ctrl || e.shiftKey !== combo.shift || e.altKey !== combo.alt) {
+          continue;
+        }
+        if (inField && id !== "palette") return;
         e.preventDefault();
-        togglePalette();
-      } else if (mod && e.key >= "1" && e.key <= "8") {
-        e.preventDefault();
-        const item = NAV_ITEMS[Number(e.key) - 1];
-        if (item) onNavigate(item.id);
-      } else if (mod && e.shiftKey && e.key.toLowerCase() === "l") {
-        e.preventDefault();
-        setThemeMode(resolvedTheme === "dark" ? "light" : "dark");
+        switch (id) {
+          case "palette":
+            togglePalette();
+            return;
+          case "paste":
+            onNavigate("dashboard");
+            return;
+          case "openDownloads":
+            onNavigate("downloads");
+            return;
+          case "openVideo":
+            onNavigate("video");
+            return;
+          case "toggleTheme":
+            setThemeMode(resolvedTheme === "dark" ? "light" : "dark");
+            return;
+        }
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [togglePalette, onNavigate, setThemeMode, resolvedTheme]);
+  }, [togglePalette, onNavigate, setThemeMode, resolvedTheme, hotkeys]);
 }
 
 /** Convenience re-export so other modules can read palette state type-safely. */

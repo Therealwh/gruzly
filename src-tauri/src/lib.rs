@@ -90,6 +90,8 @@ pub fn run() {
             commands::list_history,
             commands::clear_history,
             commands::update_ytdlp,
+            commands::set_parallel,
+            commands::set_speed_limit,
         ])
         .setup(|app| {
             // Local DB (history) in the app data dir.

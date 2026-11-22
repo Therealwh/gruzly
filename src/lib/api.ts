@@ -86,6 +86,8 @@ export type VideoDownloadSpec = {
   embedSubtitles: boolean;
   sponsorblock: boolean;
   cookiesBrowser: string | null;
+  limitRate: string | null;
+  proxy: string | null;
 };
 
 /** Error from the Rust core with a stable code for i18n mapping. */
@@ -194,6 +196,14 @@ export async function listJobs(): Promise<JobView[]> {
 
 export async function updateYtdlp(): Promise<string> {
   return call<string>("update_ytdlp");
+}
+
+export async function setParallel(n: number): Promise<void> {
+  return call<void>("set_parallel", { n });
+}
+
+export async function setSpeedLimit(limit: string): Promise<void> {
+  return call<void>("set_speed_limit", { limit });
 }
 
 // ---- history ----

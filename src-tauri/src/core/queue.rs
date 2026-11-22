@@ -18,7 +18,7 @@ use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::{Mutex, Notify, Semaphore};
+use tokio::sync::{Mutex, Notify};
 
 use super::aria2::Aria2Daemon;
 use super::db::HistoryRecord;
@@ -126,10 +126,74 @@ fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
+/// Resizable parallelism gate (tokio Semaphore cannot resize).
+pub struct Gate {
+    slots: Mutex<u32>,
+    notify: Notify,
+}
+
+impl Gate {
+    fn new(initial: u32) -> Self {
+        Self {
+            slots: Mutex::new(initial.max(1)),
+            notify: Notify::new(),
+        }
+    }
+
+    async fn acquire(&self) {
+        loop {
+            let granted = {
+                let mut slots = self.slots.lock().await;
+                if *slots > 0 {
+                    *slots -= 1;
+                    true
+                } else {
+                    false
+                }
+            };
+            if granted {
+                return;
+            }
+            self.notify.notified().await;
+        }
+    }
+
+    fn release(&self) {
+        if let Ok(mut slots) = self.slots.try_lock() {
+            *slots = slots.saturating_add(1);
+        }
+        self.notify.notify_one();
+    }
+
+    async fn set_limit(&self, n: u32) {
+        let mut slots = self.slots.lock().await;
+        *slots = n.max(1);
+        self.notify.notify_one();
+    }
+}
+
+impl Drop for GateGuard {
+    fn drop(&mut self) {
+        self.gate.release();
+    }
+}
+
+/// Held for the duration of a running job; releases its slot on drop.
+pub struct GateGuard {
+    gate: Arc<Gate>,
+}
+
+impl GateGuard {
+    async fn acquire(gate: Arc<Gate>) -> Self {
+        gate.acquire().await;
+        Self { gate }
+    }
+}
+
 pub struct QueueManager {
     jobs: Mutex<HashMap<String, Arc<Job>>>,
     order: Mutex<Vec<String>>,
-    permits: Arc<Semaphore>,
+    gate: Arc<Gate>,
 }
 
 impl QueueManager {
@@ -137,7 +201,7 @@ impl QueueManager {
         Self {
             jobs: Mutex::new(HashMap::new()),
             order: Mutex::new(Vec::new()),
-            permits: Arc::new(Semaphore::new(3)), // parallel limit (M3: setting)
+            gate: Arc::new(Gate::new(3)), // parallel limit; adjustable from Settings
         }
     }
 }
@@ -438,7 +502,7 @@ async fn run_video_job(
     binary: PathBuf,
     args: Vec<String>,
 ) {
-    let _permit = queue.permits.acquire().await;
+    let _guard = GateGuard::acquire(queue.gate.clone()).await;
     if job.status.lock().await.0 == JobStatus::Canceled {
         return;
     }
@@ -798,6 +862,7 @@ async fn run_aria2_job(
     gid: String,
 ) {
     *job.gid.lock().await = Some(gid.clone());
+    let _guard = GateGuard::acquire(queue.gate.clone()).await;
     let mut metadata_announced = false;
     let mut last_emit: Option<Instant> = None;
     let mut consecutive_errors = 0u32;
@@ -1007,4 +1072,19 @@ pub async fn select_torrent_files(
     daemon.unpause(&gid).await.map_err(|e| e.to_string())?;
     set_status(&app, &job, JobStatus::Queued, None).await;
     Ok(())
+}
+
+/// Adjusts the parallel-download gate (Settings → Downloads).
+pub async fn set_parallel(queue: State<'_, QueueManager>, n: u32) -> Result<(), String> {
+    queue.gate.set_limit(n.clamp(1, 16)).await;
+    Ok(())
+}
+
+/// Applies the global aria2 download speed limit live (e.g. "10M", "" = off).
+pub async fn set_speed_limit(app: AppHandle, limit: String) -> Result<(), String> {
+    let daemon = ensure_aria2(&app).await?;
+    daemon
+        .set_global_option("max-overall-download-limit", &limit)
+        .await
+        .map_err(|e| e.to_string())
 }

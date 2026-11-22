@@ -14,6 +14,7 @@ import { embedUrl, formatUploadDate } from "@/lib/embed";
 import { formatBytes, formatCompact, formatDuration } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useAnalysisStore } from "@/stores/analysis";
+import { proxyUrl, useSettingsStore } from "@/stores/settings";
 
 type Preset = "best" | "f1080" | "f720" | "audio";
 
@@ -85,6 +86,7 @@ function VideoPreview({
 
   const embed = embedUrl(meta);
   const dateStr = formatUploadDate(meta.uploadDate, i18n.language);
+  const settings = useSettingsStore();
 
   const videoFormats = useMemo(() => dedupeFormats(formats.filter((f) => f.hasVideo)), [formats]);
   const audioFormats = useMemo(() => formats.filter((f) => f.hasAudio && !f.hasVideo), [formats]);
@@ -97,12 +99,14 @@ function VideoPreview({
         formatSelector: preset === "audio" ? null : PRESET_SELECTOR[preset],
         audioOnly: preset === "audio",
         audioFormat: preset === "audio" ? audioFormat : null,
-        folder: null,
-        outputTemplate: null,
+        folder: settings.downloadFolder || null,
+        outputTemplate: settings.filenameTemplate || null,
         subtitles: subLangs,
         embedSubtitles: subLangs.length > 0,
-        sponsorblock: false,
-        cookiesBrowser: null,
+        sponsorblock: settings.sponsorblock,
+        cookiesBrowser: settings.cookiesEnabled ? settings.cookiesBrowser : null,
+        limitRate: settings.speedLimit || null,
+        proxy: proxyUrl(settings),
       };
       await startVideoDownload(spec, meta.title);
       toast.success(t("toasts.downloadStarted"));
@@ -321,6 +325,7 @@ function PlaylistPreview({
   const { t } = useTranslation();
   const [selected, setSelected] = useState<Set<string>>(() => new Set(entries.map((e) => e.id)));
   const [starting, setStarting] = useState(false);
+  const settings = useSettingsStore();
 
   const toggle = (id: string) => {
     setSelected((prev) => {
@@ -342,12 +347,14 @@ function PlaylistPreview({
             formatSelector: PRESET_SELECTOR.best,
             audioOnly: false,
             audioFormat: null,
-            folder: null,
-            outputTemplate: null,
+            folder: settings.downloadFolder || null,
+            outputTemplate: settings.filenameTemplate || null,
             subtitles: [],
             embedSubtitles: false,
-            sponsorblock: false,
-            cookiesBrowser: null,
+            sponsorblock: settings.sponsorblock,
+            cookiesBrowser: settings.cookiesEnabled ? settings.cookiesBrowser : null,
+            limitRate: settings.speedLimit || null,
+            proxy: proxyUrl(settings),
           },
           entry.title,
         );

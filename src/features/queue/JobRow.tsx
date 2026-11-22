@@ -134,15 +134,15 @@ export function JobRow({ job, compact = false }: { job: JobView; compact?: boole
           {active && (
             <RowAction icon={X} label={t("common.cancel")} danger onClick={() => void cancelJob(job.id)} />
           )}
+          {job.folder && (
+            <RowAction
+              icon={FolderOpen}
+              label={t("common.openFolder")}
+              onClick={() => void openFolder(job.folder as string, t("errors.generic"))}
+            />
+          )}
           {(job.status === "completed" || job.status === "failed" || job.status === "canceled") && (
             <>
-              {job.folder && (
-                <RowAction
-                  icon={FolderOpen}
-                  label={t("common.openFolder")}
-                  onClick={() => void openFolder(job.folder as string, t("errors.generic"))}
-                />
-              )}
               <RowAction
                 icon={X}
                 label={t("common.removeFromList")}
@@ -151,7 +151,7 @@ export function JobRow({ job, compact = false }: { job: JobView; compact?: boole
                   void removeJob(job.id).catch(() => toast.warning(t("errors.generic")));
                 }}
               />
-            </>
+              </>
           )}
         </div>
       </div>

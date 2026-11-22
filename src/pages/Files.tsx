@@ -48,6 +48,7 @@ export function Files() {
       try {
         if (kind === "magnet") {
           await startTorrent({ magnet: value }, folder);
+          toast.info(t("files.torrent.pickingHint"));
         } else {
           // .torrent URLs too — aria2 detects them via addUri
           await startFileDownload(value, undefined, folder);
@@ -101,7 +102,7 @@ export function Files() {
       try {
         const b64 = await fileToBase64(file);
         await startTorrent({ torrentBase64: b64 }, folder);
-        toast.success(t("toasts.downloadStarted"));
+        toast.info(t("files.torrent.pickingHint"));
       } catch (e) {
         if (e instanceof CommandError && e.code === "browserMode") {
           toast.warning(t("errors.generic"));

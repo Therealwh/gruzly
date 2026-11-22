@@ -218,7 +218,8 @@
       "selectedSize": "Выбрано",
       "infoHash": "Info-хеш",
       "trackers": "Трекеры",
-      "ratioLimit": "Лимит ратио"
+      "ratioLimit": "Лимит ратио",
+      "pickingHint": "Отметьте нужные файлы в открывшемся окне выбора…"
     },
     "empty": {
       "title": "Нет загрузок файлов",

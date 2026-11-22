@@ -838,7 +838,7 @@ pub async fn restore_pending_jobs(app: AppHandle) -> usize {
         if row.kind != "video" {
             continue;
         }
-        let spec: VideoDownloadSpec = match serde_json::from_str(&row.spec_json) {
+        let mut spec: VideoDownloadSpec = match serde_json::from_str(&row.spec_json) {
             Ok(s) => s,
             Err(e) => {
                 log::warn!("dropping corrupt pending job {}: {e}", row.id);
@@ -846,6 +846,9 @@ pub async fn restore_pending_jobs(app: AppHandle) -> usize {
                 continue;
             }
         };
+        // Older specs may carry an HLS-prone selector; the current default
+        // avoids m3u8 so progress stays visible.
+        spec.format_selector = None;
         if binary.is_none() {
             log::warn!("yt-dlp missing; cannot restore pending job {}", row.id);
             continue;

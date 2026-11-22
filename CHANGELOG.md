@@ -3,6 +3,20 @@
 All notable changes to Gruzly are documented here. Format: Keep a Changelog,
 versioning: SemVer.
 
+## [0.2.0] — 2026-11-23
+
+### Fixed
+- Restored (after restart) downloads carried an outdated format selector
+  that could pick HLS streams with no progress reporting — the selector is
+  now reset to the protocol-aware default.
+- "Open folder" is available for active tasks too, not only finished ones.
+
+### Changed
+- Torrent adds now say "pick the files in the selection window" instead of
+  "download started"; the latter appears only after files are confirmed.
+- Completed downloads show a visible in-app toast with the title on top of
+  the system notification.
+
 ## [0.1.9] — 2026-11-23
 
 ### Fixed

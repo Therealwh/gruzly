@@ -1,5 +1,6 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { create } from "zustand";
+import { t } from "@/lib/i18n";
 import {
   isTauri,
   listJobs,
@@ -108,6 +109,11 @@ export const useQueueStore = create<QueueState>((set, get) => ({
         title: e.title ?? existing.title,
       });
       set({ jobs: next });
+      if (e.status === "completed" && e.title) {
+        import("@/components/ui").then(({ toast }) =>
+          toast.success(`${t("toasts.downloadCompleted")} — ${e.title}`),
+        );
+      }
       void notifyOnTerminal(e.status, e.title ?? existing.title, e.error);
     } else if (e.title !== null) {
       // New job announced before listJobs saw it.

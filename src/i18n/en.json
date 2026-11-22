@@ -212,7 +212,8 @@
       "selectedSize": "Selected",
       "infoHash": "Info hash",
       "trackers": "Trackers",
-      "ratioLimit": "Ratio limit"
+      "ratioLimit": "Ratio limit",
+      "pickingHint": "Pick the files in the selection window that just opened…"
     },
     "empty": {
       "title": "No file downloads",

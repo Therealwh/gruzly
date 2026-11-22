@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or usage help
+    url: https://github.com/Therealwh/gruzly/discussions
+    about: Ask how things work before filing an issue
+  - name: Security vulnerability
+    url: https://github.com/Therealwh/gruzly/security/advisories/new
+    about: Please use private security reports, not public issues

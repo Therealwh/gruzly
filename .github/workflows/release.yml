@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Lint · Typecheck · Tests
+    uses: ./.github/workflows/quality.yml
+
+  build:
+    name: Build & Publish (${{ matrix.os }})
+    needs: quality
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundle_args: "--bundles nsis,msi"
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bundle_args: "--bundles app"
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundle_args: "--bundles deb,appimage"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Install Linux dependencies (webkit2gtk, aria2)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libudev-dev aria2
+      - name: Install macOS dependencies (aria2, ffmpeg)
+        if: runner.os == 'macOS'
+        run: brew install aria2 ffmpeg
+      - name: Fetch sidecar engines
+        run: npm run engines:fetch
+      - run: npm ci
+      - name: Build, sign & publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          args: ${{ matrix.bundle_args }}
+          includeUpdaterArtifacts: true
+          tagName: ${{ github.ref_name }}
+          releaseName: "Gruzly ${{ github.ref_name }}"
+          releaseBody: "Download only content you own or have permission to save. Gruzly does not support or circumvent DRM."
+          releaseDraft: false
+          prerelease: false
+      - name: Assemble portable (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $out = "portable/Gruzly-portable-win64"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item src-tauri/target/release/gruzly.exe $out/
+          Copy-Item src-tauri/target/release/*.exe $out/ -Exclude gruzly.exe
+          Compress-Archive -Path $out/* -DestinationPath portable/Gruzly-portable-win64.zip -Force
+      - name: Upload portable to release
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload $env:GITHUB_REF_NAME portable/Gruzly-portable-win64.zip --clobber

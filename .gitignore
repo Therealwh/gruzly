@@ -20,3 +20,19 @@ Thumbs.db
 .vscode/
 .tauri/
 portable/
+
+# Internal project notes and agent/session artifacts — never commit
+plan.md
+rep.md
+SKILLS.md
+PLAN.md
+project-notes/
+CLAUDE.md
+AGENTS.md
+.cursorrules
+.claude/
+.agents/
+.cursor/
+.codex/
+.specstory/
+.vetting/

@@ -1,82 +1,83 @@
-# Security Review — Gruzly v0.1.0
+# Security Review — Gruzly v0.1.2
 
-Ревью выполнено в **guidance mode** скилла [`security-audit`](https://github.com/cloudflare/security-audit-skill)
-(Фаза 0, см. SKILLS.md) перед релизом. Профиль: desktop-app (Tauri 2 webview) + локальный
-IPC (aria2 JSON-RPC на loopback) + sidecar-процессы (yt-dlp / aria2 / ffmpeg).
+Focused review of trust boundaries before public release. Profile: desktop app
+(Tauri 2 webview) + local IPC (aria2 JSON-RPC on loopback) + sidecar processes
+(yt-dlp / aria2 / ffmpeg).
 
-**Границы доверия:**
+**Trust boundaries**
 
-1. Remote web-content → webview (CSP, iframe-embed предпросмотра).
-2. Frontend (untrusted renderer) → Rust-ядро через IPC-команды.
-3. Другие локальные процессы → aria2 RPC (loopback TCP).
-4. Удалённые серверы → движки (yt-dlp/aria2 разбирают ответы серверов).
-5. Локальный .torrent файл → движок.
+1. Remote web content → webview (CSP, preview embeds).
+2. Frontend renderer → Rust core over IPC commands.
+3. Other local processes → aria2 RPC (loopback TCP).
+4. Remote servers → engines (yt-dlp/aria2 parse arbitrary server responses).
+5. Local `.torrent` files → engine.
 
-## Находки и статус
+## Findings and status
 
-### F1 — Аргумент-инъекция через URL/строки IPC (P1) — ИСПРАВЛЕНО
-**Вектор:** IPC-команды принимают строки из рендерера (ск compromized/расширение могло бы
-вызвать `analyze_url("--config-file=…")` или `start_file_download("--limit-rate=…")`):
-значение с ведущим `-` попадает в argv движка как флаг.
-**Фикс:** `validate_url` (схемы http/https/ftp + непустой host + запрет ведущего `-`)
-в `analyze_url`/`start_video`/`start_file`; `validate_magnet` (строгий префикс
-`magnet:?xt=urn:btih|sha1|btmh`) в `start_torrent`; allowlist браузеров для
-`--cookies-from-browser`; санитайз `-o` шаблона (запрет `..`, абсолютных путей).
-Все проверки — в Rust, до передачи argv. Тесты: `url_validation_rejects_injection_and_bad_schemes`,
-`magnet_validation`, `cookies_browser_allowlist`, `output_template_stays_in_folder`.
+### F1 — Argument injection through IPC strings (P1) — FIXED
+**Vector:** IPC commands accept strings from the renderer; a value with a
+leading `-` would land in engine argv as a flag
+(`analyze_url("--config-file=…")`, `start_file_download("--limit-rate=…")`).
+**Fix:** `validate_url` (http/https/ftp schemes only + non-empty host + leading
+dash rejected) in `analyze_url` / `start_video` / `start_file`; `validate_magnet`
+(strict `magnet:?xt=urn:btih|sha1|btmh` prefixes) in `start_torrent`; allowlist
+of browser names for `--cookies-from-browser`; output-template sanitization
+(no `..`, no absolute paths). All checks run in Rust before argv is built.
+Tests: `url_validation_rejects_injection_and_bad_schemes`, `magnet_validation`,
+`cookies_browser_allowlist`, `output_template_stays_in_folder`.
 
-### F2 — aria2 RPC: peer-authentication (P2) — ОЦЕНЕНО, риск принят
-**Вектор:** другой локальный процесс подключается к `127.0.0.1:<port>` и управляет
-загрузками / читает список задач.
-**Контроль:** RPC-секрет (32 hex, CSPRNG через uuid v4) обязателен в каждом вызове
-(`token:` первый параметр), живёт только в памяти Rust-процесса, **не логируется и не
-пишется на диск**; слушает только loopback (`--rpc-listen-all=false`); порт эфемерный.
-Локальный атакующий той же учётки мог бы прочитать память процесса (нужны права той же
-учётной записи — граница «same user» не считается нарушением по модели угроз desktop-app).
+### F2 — aria2 RPC peer authentication (P2) — REVIEWED, risk accepted
+**Vector:** another local process connects to `127.0.0.1:<port>` and drives
+downloads or reads the task list.
+**Controls:** RPC secret (32 hex chars, CSPRNG) required in every call
+(`token:` first parameter); lives only in Rust process memory, never logged,
+never written to disk; loopback-only listener (`--rpc-listen-all=false`);
+ephemeral port. A same-account attacker could read process memory — within the
+desktop threat model this is not a boundary crossing.
 
-### F3 — Cookies браузера (P2) — ОЦЕНЕНО
-Cookies передаются движку только по явному действию пользователя (переключатель в
-Настройках), значением служит **имя браузера** из allowlist (F1) — сами cookies никогда
-не проходят через фронтенд и не попадают в логи. yt-dlp читает их напрямую из локального
-профиля браузера.
+### F3 — Browser cookies (P2) — REVIEWED
+Cookies are used only after an explicit user toggle. The frontend passes a
+browser *name* from a fixed allowlist; cookie data itself never travels through
+the frontend and is never logged. yt-dlp reads them directly from the local
+browser profile.
 
-### F4 — Remote content в webview (P2) — ОЦЕНЕНО
-CSP: `default-src 'self'`; `frame-src` — белый список embed-доменов (YouTube-nocookie,
-VK, Rutube, OK, Dzen, Twitch, Bilibili); `connect-src` — `ipc:`/`http://ipc.localhost`.
-Embed-iframe рендерятся с `sandbox="allow-scripts allow-same-origin allow-presentation"`.
-`assetProtocol` отключён. Неявные протоколы/навигация webview ограничены packaged origin.
+### F4 — Remote content in the webview (P2) — REVIEWED
+CSP: `default-src 'self'`; `frame-src` allowlists preview embed hosts
+(YouTube-nocookie, VK, Rutube, OK, Dzen, Twitch, Bilibili); `connect-src` is
+`ipc:` / `http://ipc.localhost`. Preview iframes render with
+`sandbox="allow-scripts allow-same-origin allow-presentation"`. The asset
+protocol is disabled.
 
-### F5 — Обновление yt-dlp (P2) — ОЦЕНЕНО
-Авто-обновление — встроенный self-updater yt-dlp (`--update`, HTTPS до официального
-репозитория, проверка подписи бинарника в канале `stable`); выполняется только для
-бандленного движка (PATH-копии системного пакет-менеджера не трогаются). Не fatal:
-ошибка обновления пишется в лог, загрузка продолжается старой версией.
+### F5 — yt-dlp updates (P2) — REVIEWED
+Auto-update uses the built-in self-updater (`--update`, HTTPS to the official
+repository, signed binaries in the stable channel) and only for bundled copies
+(PATH copies owned by a system package manager are left alone). Failures are
+non-fatal and logged.
 
-### F6 — Секреты и PII в логах (P1) — ПРОВЕРЕНО
-Аргументы процессов никогда не логируются; aria2 secret отсутствует во всех путях
-логирования; URL от пользователя пишется в историю локально (SQLite в app-data dir,
-WAL), экспорт CSV — только явным действием пользователя.
+### F6 — Secrets and PII in logs (P1) — VERIFIED
+Process arguments are never logged; the aria2 secret appears in no logging
+path. User URLs are stored locally in SQLite (WAL) inside the app data dir;
+CSV export happens only on explicit user action.
 
-### F7 — Локальные файлы (P2) — ОЦЕНЕНО
-Приложение не исполняет скачанные файлы; «Открыть папку/файл» идёт через
-tauri-plugin-opener (системный обработчик). Session-файл aria2 и БД лежат в
-app-data dir текущего пользователя (ACL по умолчанию учётки).
+### F7 — Local files (P2) — REVIEWED
+The app never executes downloaded content. "Open folder" goes through
+tauri-plugin-opener (system handler). The aria2 session file and the database
+live in the per-user app data dir with default account ACLs.
 
-### F8 — Supply chain (P2) — ОЦЕНЕНО
-Движки скачиваются билд-скриптом только по HTTPS с официальных источников
-(GitHub releases yt-dlp/aria2/BtbN-FFmpeg) и бандлятся через Tauri `externalBin`
-(фиксированные имена). Зависимости зафиксированы lock-файлами (Cargo.lock,
-package-lock.json). Скиллы агентской фазы прошли ревью до установки (SKILLS.md).
+### F8 — Supply chain (P2) — REVIEWED
+Engines are fetched by a build script over HTTPS from official distribution
+points (GitHub releases of yt-dlp, aria2, BtbN FFmpeg builds) and bundled via
+Tauri `externalBin` with fixed names. Dependency trees are pinned by lockfiles
+(Cargo.lock, package-lock.json).
 
-## Needs validation (не наблюдаемо на этой машине)
+## Needs validation
 
-- NV1: финальные NSIS/MSI ACL установленной папки на Windows (Packaging fact).
-- NV2: поведение автозапуска ОС (autostart) в связке с `--minimized` — не проверялось
-  live на macOS/Linux (установщики там собираются в CI).
+- NV1: final NSIS/MSI install-directory ACLs on Windows (packaging fact, not
+  observable outside the CI/packaging step).
+- NV2: autostart behavior in combination with `--minimized` on macOS/Linux.
 
-## Остаточные риски (принято)
+## Accepted residual risk
 
-- Скачиваемый контент — данные пользователей; гигиена открытия (никаких autoexec)
-  подтверждена (F7). DRM не поддерживается и не обходится.
-- UA/происхождение iframe-embed доверяется доменам allowlist (F4); содержимое embed
-  не получает доступа к IPC (CSP + origin-изоляция).
+Downloaded content is user data; nothing is executed automatically. DRM is not
+supported and not circumvented. Preview embed hosts are trusted for their
+frames only; they have no IPC access (CSP + origin isolation).

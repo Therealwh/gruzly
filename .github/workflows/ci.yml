@@ -115,8 +115,8 @@ jobs:
         run: |
           $out = "portable/Gruzly-portable-win64"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
-          Copy-Item src-tauri/target/x86_64-pc-windows-msvc/release/gruzly.exe $out/
-          Copy-Item src-tauri/target/x86_64-pc-windows-msvc/release/*.exe $out/ -Exclude gruzly.exe
+          Copy-Item src-tauri/target/release/gruzly.exe $out/
+          Copy-Item src-tauri/target/release/*.exe $out/ -Exclude gruzly.exe
           Compress-Archive -Path $out/* -DestinationPath portable/Gruzly-portable-win64.zip -Force
       - name: Upload portable to release (tags only)
         if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/v')

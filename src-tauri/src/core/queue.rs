@@ -93,6 +93,7 @@ pub struct StateEvent {
 
 pub const EVENT_PROGRESS: &str = "job://progress";
 pub const EVENT_STATE: &str = "job://state";
+pub const EVENT_ACTIVITY: &str = "job://activity";
 const EMIT_INTERVAL: Duration = Duration::from_millis(250); // ≤4 renders/sec
 
 #[derive(Debug, Default, Clone)]
@@ -593,18 +594,40 @@ async fn run_video_job(
     let stdout = child.stdout.take().expect("stdout piped");
     let stderr = child.stderr.take().expect("stderr piped");
 
-    // Drain stderr in the background so yt-dlp is never back-pressured;
-    // keep the last lines as the error message source.
+    // Drain stderr in the background: surface the last line as live
+    // activity in the UI (throttled) and keep a tail for error reports.
     let stderr_tail: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let stderr_tail_reader = stderr_tail.clone();
+    let activity_job = job.id.clone();
+    let activity_app = app.clone();
     tokio::spawn(async move {
         let mut lines = BufReader::new(stderr).lines();
+        let mut last_emit = Instant::now() - EMIT_INTERVAL;
+        let mut last_line = String::new();
         while let Ok(Some(line)) = lines.next_line().await {
+            let is_noise = line.starts_with('{') || line.trim().is_empty();
+            if !is_noise && last_emit.elapsed() >= EMIT_INTERVAL {
+                last_emit = Instant::now();
+                last_line = line.clone();
+                let _ = activity_app.emit(
+                    EVENT_ACTIVITY,
+                    serde_json::json!({ "id": activity_job, "text": line }),
+                );
+            } else if !is_noise {
+                last_line = line.clone();
+            }
             let mut tail = stderr_tail_reader.lock().await;
             tail.push(line);
             if tail.len() > 12 {
                 tail.remove(0);
             }
+        }
+        // Surface a final activity line so the UI never looks frozen.
+        if !last_line.is_empty() {
+            let _ = activity_app.emit(
+                EVENT_ACTIVITY,
+                serde_json::json!({ "id": activity_job, "text": last_line }),
+            );
         }
     });
 
@@ -813,24 +836,21 @@ pub struct TorrentFileInfo {
 }
 
 /// Returns the shared aria2 daemon, spawning it on first use.
+/// The state lock is held across the spawn so concurrent callers (two
+/// quick adds, tray actions) cannot race into two daemons — the loser of
+/// the previous race died via kill_on_drop and jobs hung on dead RPC.
 async fn ensure_aria2(app: &AppHandle) -> Result<Arc<Aria2Daemon>, String> {
-    {
-        let state: State<'_, crate::AppState> = app.state();
-        let guard = state.aria2.lock().await;
-        if let Some(daemon) = guard.as_ref() {
-            return Ok(daemon.clone());
-        }
+    let state: State<'_, crate::AppState> = app.state();
+    let mut guard = state.aria2.lock().await;
+    if let Some(daemon) = guard.as_ref() {
+        return Ok(daemon.clone());
     }
     let binary = engines::find_engine(app, "aria2").ok_or("aria2 not found")?;
     let dir = app.path().download_dir().map_err(|e| e.to_string())?;
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let session = data_dir.join("aria2.session");
-    let daemon = Aria2Daemon::spawn(&binary, dir, session)
+    let daemon = Aria2Daemon::spawn(&binary, dir)
         .await
         .map_err(|e| e.to_string())?;
-
-    let state: State<'_, crate::AppState> = app.state();
-    *state.aria2.lock().await = Some(daemon.clone());
+    *guard = Some(daemon.clone());
     Ok(daemon)
 }
 

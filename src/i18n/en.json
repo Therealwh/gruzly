@@ -436,7 +436,8 @@
     "analysisFailed": "Couldn't analyze this link. The site may be unavailable or unsupported.",
     "rpcFailed": "Download engine is not responding. Restarting it usually helps.",
     "torrentActive": "This torrent is already downloading — find it in the queue",
-    "torrentComplete": "This torrent has already been downloaded"
+    "torrentComplete": "This torrent has already been downloaded",
+    "ytdlpCookies": "The site asks to sign in. Enable browser cookies in Settings → Integrations and try again."
   },
   "format": {
     "perSecond": "{{value}}/s",
@@ -449,5 +450,8 @@
     "install": "Update and restart",
     "downloading": "Downloading update…",
     "failed": "Update check failed. Try again later."
+  },
+  "jobs": {
+    "activity": "Status"
   }
 }

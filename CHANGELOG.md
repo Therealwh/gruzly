@@ -3,6 +3,21 @@
 All notable changes to Gruzly are documented here. Format: Keep a Changelog,
 versioning: SemVer.
 
+## [0.1.7] — 2026-11-22
+
+### Fixed
+- Critical: the aria2 daemon could be killed by a concurrent launch race —
+  two "add" actions racing spawned two daemons, one replaced the other and
+  kill-on-drop killed the live one, leaving the UI hanging on dead RPC
+  (the "torrent shows 100% / nothing on disk" family). The state lock is
+  now held across the spawn.
+- No phantom torrents: stale session persistence is dropped, so tasks from
+  a previous run never resume outside the queue.
+- Live engine status in the queue: yt-dlp progress lines (webpage, formats,
+  fragments) stream into the task row instead of a frozen "Downloading".
+- When YouTube asks to sign in, the row explains the fix (enable browser
+  cookies in Settings → Integrations).
+
 ## [0.1.6] — 2026-11-22
 
 ### Added

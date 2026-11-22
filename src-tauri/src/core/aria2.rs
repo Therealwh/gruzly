@@ -39,17 +39,13 @@ impl Aria2Daemon {
     pub async fn spawn(
         binary: &Path,
         download_dir: PathBuf,
-        session_file: PathBuf,
     ) -> Result<Arc<Aria2Daemon>, Aria2Error> {
         let port = free_port()?;
         // 32 hex chars — aria2 requires 6..=32; random per launch.
         let secret = uuid::Uuid::new_v4().simple().to_string();
 
-        // aria2 refuses a missing --input-file; seed an empty session.
-        if !session_file.exists() {
-            std::fs::File::create(&session_file)?;
-        }
-
+        // No session persistence: restoring stale torrents from a previous
+        // run produced phantom downloads outside the UI queue.
         let args: Vec<String> = vec![
             "--enable-rpc".into(),
             "--rpc-listen-all=false".into(),
@@ -62,9 +58,6 @@ impl Aria2Daemon {
             "--min-split-size=1M".into(),
             "--summary-interval=0".into(),
             "--auto-save-interval=30".into(),
-            "--force-save=true".into(),
-            format!("--save-session={}", session_file.to_string_lossy()),
-            format!("--input-file={}", session_file.to_string_lossy()),
             "--enable-dht=true".into(),
             // Stop seeding once we've uploaded as much as we downloaded:
             // then aria2 reports "complete" and the task settles.

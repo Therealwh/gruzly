@@ -14,6 +14,7 @@ import type { JobView } from "@/lib/api";
 import { cancelJob, pauseJob, removeJob, resumeJob } from "@/lib/api";
 import { formatBytes, formatEta, formatSpeed } from "@/lib/format";
 import { useUiStore } from "@/stores/ui";
+import { useQueueStore } from "@/stores/queue";
 import { cn } from "@/lib/utils";
 
 const STATUS_TONE: Record<JobView["status"], "neutral" | "accent" | "success" | "warning" | "danger" | "info"> = {
@@ -31,6 +32,7 @@ const STATUS_TONE: Record<JobView["status"], "neutral" | "accent" | "success" | 
 export function JobRow({ job, compact = false }: { job: JobView; compact?: boolean }) {
   const { t } = useTranslation();
   const language = useUiStore((s) => s.language);
+  const activity = useQueueStore((s) => s.activity.get(job.id));
   const active = job.status === "downloading" || job.status === "merging" || job.status === "queued";
   const seeding = job.status === "seeding";
   const percent =
@@ -93,10 +95,21 @@ export function JobRow({ job, compact = false }: { job: JobView; compact?: boole
             )}
             {job.status === "failed" && job.error && (
               <Tooltip content={job.error} className="max-w-96">
-                <span className="cursor-default truncate text-danger/80" data-selectable>
-                  {job.error.split("\n").pop()}
+                <span
+                  className="cursor-default truncate text-danger/80"
+                  data-selectable
+                  title={/sign in to confirm/i.test(job.error) ? t("errors.ytdlpCookies") : undefined}
+                >
+                  {/sign in to confirm/i.test(job.error)
+                    ? t("errors.ytdlpCookies")
+                    : job.error.split("\n").pop()}
                 </span>
               </Tooltip>
+            )}
+            {active && activity && (
+              <span className="truncate text-text-disabled" data-selectable title={activity}>
+                {activity}
+              </span>
             )}
           </div>
         </div>

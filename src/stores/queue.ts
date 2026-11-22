@@ -14,11 +14,14 @@ type QueueState = {
   jobs: Map<string, JobView>;
   order: string[];
   connected: boolean;
+  /** Last yt-dlp/aria2 status line per job (live activity). */
+  activity: Map<string, string>;
   /** Torrent whose metadata resolved and awaits file selection. */
   torrentReady: TorrentReadyEvent | null;
   hydrate: () => Promise<void>;
   applyProgress: (e: ProgressEvent) => void;
   applyState: (e: StateEvent) => void;
+  applyActivity: (id: string, text: string) => void;
   applyTorrentReady: (e: TorrentReadyEvent) => void;
   dismissTorrent: () => void;
   /** Applies a drag-and-drop reordering (ids in their new display order). */
@@ -63,6 +66,7 @@ export const useQueueStore = create<QueueState>((set, get) => ({
   jobs: new Map(),
   order: [],
   connected: false,
+  activity: new Map(),
   torrentReady: null,
 
   hydrate: async () => {
@@ -128,6 +132,12 @@ export const useQueueStore = create<QueueState>((set, get) => ({
     }
   },
 
+  applyActivity: (id: string, text: string) => {
+    const next = new Map(get().activity);
+    next.set(id, text);
+    set({ activity: next });
+  },
+
   applyTorrentReady: (e) => {
     set({ torrentReady: e });
   },
@@ -151,6 +161,9 @@ export const useQueueStore = create<QueueState>((set, get) => ({
       listen<ProgressEvent>("job://progress", (e) => get().applyProgress(e.payload)),
       listen<StateEvent>("job://state", (e) => get().applyState(e.payload)),
       listen<TorrentReadyEvent>("torrent://ready", (e) => get().applyTorrentReady(e.payload)),
+      listen<{ id: string; text: string }>("job://activity", (e) =>
+        get().applyActivity(e.payload.id, e.payload.text),
+      ),
     ]);
     set({ connected: true });
     return () => {

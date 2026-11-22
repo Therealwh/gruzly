@@ -118,7 +118,7 @@ impl Aria2Daemon {
                 }
             }
         }
-        guard.start_kill();
+        let _ = guard.start_kill();
         let detail = stderr_tail.unwrap_or_else(|| "RPC did not answer in 2s".to_string());
         log::error!("aria2 daemon failed to start: {detail}");
         Err(Aria2Error::Rpc(detail))

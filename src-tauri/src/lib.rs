@@ -134,7 +134,17 @@ pub fn run() {
                     }
                 });
 
-            schedule_ytdlp_auto_update(handle);
+            schedule_ytdlp_auto_update(handle.clone());
+
+            // The window starts hidden (no white flash while WebView2 warms
+            // up); the frontend shows it when rendered. Safety net: show it
+            // after 6 s no matter what.
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+                if let Some(window) = handle.get_webview_window("main") {
+                    let _ = window.show();
+                }
+            });
             Ok(())
         })
         .run(tauri::generate_context!())

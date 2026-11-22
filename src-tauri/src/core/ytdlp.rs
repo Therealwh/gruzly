@@ -494,7 +494,8 @@ pub fn download_args(
         "--no-mtime".into(),
         "--progress-template".into(),
         "download:%(progress)j".into(),
-        "--restrict-filenames".into(),
+        // Keep readable unicode filenames; yt-dlp sanitizes illegal chars
+        // per-platform itself (--restrict-filenames would mangle Cyrillic).
     ];
 
     // Bundled ffmpeg is not on PATH — point yt-dlp at it explicitly so

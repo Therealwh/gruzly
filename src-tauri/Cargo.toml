@@ -1,6 +1,6 @@
 [package]
 name = "gruzly"
-version = "0.1.4"
+version = "0.1.5"
 description = "Gruzly — download manager: files, torrents and video"
 authors = ["Gruzly contributors"]
 license = "MIT"

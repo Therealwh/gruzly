@@ -64,7 +64,8 @@
       "seeding": "Seeding"
     },
     "emptyTitle": "Nothing here yet",
-    "emptyHint": "Paste a link to get started"
+    "emptyHint": "Paste a link to get started",
+    "stop": "Stop seeding"
   },
   "dashboard": {
     "title": "Dashboard",

@@ -66,6 +66,9 @@ impl Aria2Daemon {
             format!("--save-session={}", session_file.to_string_lossy()),
             format!("--input-file={}", session_file.to_string_lossy()),
             "--enable-dht=true".into(),
+            // Stop seeding once we've uploaded as much as we downloaded:
+            // then aria2 reports "complete" and the task settles.
+            "--seed-ratio=1.0".into(),
             // NOTE: do NOT pass --listen-port=0 — aria2 requires 1024..65535
             // and would exit immediately (the "0 reactions" bug). The default
             // 6881-6999 range is fine: aria2 skips busy ports itself.

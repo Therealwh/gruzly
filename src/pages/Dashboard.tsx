@@ -27,7 +27,7 @@ export function Dashboard({ onNavigate }: Props) {
 
   const activeJobs = order
     .map((id) => jobs.get(id))
-    .filter((j) => j && ["downloading", "merging", "queued", "paused"].includes(j.status))
+    .filter((j) => j && ["downloading", "merging", "seeding", "queued", "paused"].includes(j.status))
     .slice(0, 3);
 
   const submit = useCallback(() => {

@@ -3,6 +3,19 @@
 All notable changes to Gruzly are documented here. Format: Keep a Changelog,
 versioning: SemVer.
 
+## [0.1.5] — 2026-11-22
+
+### Fixed
+- Torrents at 100% showed "Downloading" forever: BitTorrent tasks keep
+  `active` while seeding. Seeding now has its own status (with upload speed),
+  and the default seed ratio is 1.0 so tasks settle to Completed.
+- Torrent titles show the real release name (from the metadata) in the queue
+  and history instead of a generic "Torrent".
+- Video downloads of Cyrillic titles were saved as underscore-mangled names:
+  `--restrict-filenames` is dropped, files keep readable names.
+- Startup white screen: the window now appears once the UI has rendered
+  (with a 6 s safety timer).
+
 ## [0.1.4] — 2026-11-22
 
 ### Added

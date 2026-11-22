@@ -20,6 +20,7 @@ const STATUS_TONE: Record<JobView["status"], "neutral" | "accent" | "success" | 
   queued: "neutral",
   downloading: "accent",
   merging: "info",
+  seeding: "info",
   paused: "warning",
   completed: "success",
   failed: "danger",
@@ -31,6 +32,7 @@ export function JobRow({ job, compact = false }: { job: JobView; compact?: boole
   const { t } = useTranslation();
   const language = useUiStore((s) => s.language);
   const active = job.status === "downloading" || job.status === "merging" || job.status === "queued";
+  const seeding = job.status === "seeding";
   const percent =
     job.totalBytes && job.totalBytes > 0
       ? Math.min(job.downloadedBytes / job.totalBytes, 1)
@@ -74,8 +76,14 @@ export function JobRow({ job, compact = false }: { job: JobView; compact?: boole
                 {job.totalBytes ? ` / ${formatBytes(job.totalBytes, language)}` : ""}
               </span>
             )}
+            {seeding && (
+              <span className="tnum">{formatBytes(job.totalBytes ?? job.downloadedBytes, language)}</span>
+            )}
             {job.status === "downloading" && job.speed > 0 && (
               <span className="tnum">{formatSpeed(job.speed, language)}</span>
+            )}
+            {seeding && job.speed > 0 && (
+              <span className="tnum">↑ {formatSpeed(job.speed, language)}</span>
             )}
             {job.status === "downloading" && job.eta > 0 && (
               <span className="tnum">{t("format.eta", { value: formatEta(job.eta, language) })}</span>
@@ -96,6 +104,13 @@ export function JobRow({ job, compact = false }: { job: JobView; compact?: boole
         <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
           {job.status === "downloading" && (
             <RowAction icon={Ban} label={t("common.pause")} onClick={() => void pauseJob(job.id)} />
+          )}
+          {seeding && (
+            <RowAction
+              icon={Ban}
+              label={t("common.stop")}
+              onClick={() => void cancelJob(job.id)}
+            />
           )}
           {job.status === "paused" && (
             <RowAction icon={Play} label={t("common.resume")} onClick={() => void resumeJob(job.id)} />
@@ -128,11 +143,11 @@ export function JobRow({ job, compact = false }: { job: JobView; compact?: boole
         </div>
       </div>
 
-      {(active || job.status === "paused") && (
+      {(active || job.status === "paused" || seeding) && (
         <ProgressBar
           value={percent ?? undefined}
           indeterminate={percent == null && job.status === "downloading"}
-          tone={job.status === "paused" ? "accent" : "accent"}
+          tone="success"
           className="h-1"
         />
       )}

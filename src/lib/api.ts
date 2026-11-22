@@ -262,6 +262,7 @@ export type JobStatus =
   | "queued"
   | "downloading"
   | "merging"
+  | "seeding"
   | "paused"
   | "completed"
   | "failed"

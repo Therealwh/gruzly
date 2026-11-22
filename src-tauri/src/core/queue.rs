@@ -46,6 +46,7 @@ pub enum JobStatus {
     Queued,
     Downloading,
     Merging,
+    Seeding,
     Paused,
     Completed,
     Failed,
@@ -109,7 +110,8 @@ struct Job {
     kind: JobKind,
     engine: String,
     url: String,
-    title: String,
+    /// Mutable: torrent titles arrive with metadata after the job starts.
+    title: Mutex<String>,
     folder: Option<String>,
     status: Mutex<(JobStatus, Option<String>)>, // status + error
     progress: Mutex<Progress>,
@@ -222,7 +224,7 @@ async fn job_view(job: &Job) -> JobView {
         kind: job.kind,
         engine: job.engine.clone(),
         url: job.url.clone(),
-        title: job.title.clone(),
+        title: job.title.lock().await.clone(),
         folder: job.folder.clone(),
         filename: progress.filename.clone(),
         status: status.0,
@@ -246,7 +248,7 @@ async fn set_status(app: &AppHandle, job: &Job, status: JobStatus, error: Option
         StateEvent {
             id: job.id.clone(),
             status,
-            title: Some(job.title.clone()),
+            title: Some(job.title.lock().await.clone()),
             error,
         },
     );
@@ -377,7 +379,7 @@ pub async fn start_video(
         kind: JobKind::Video,
         engine: "yt-dlp".into(),
         url: spec.url.clone(),
-        title: title.clone(),
+        title: Mutex::new(title.clone()),
         folder,
         status: Mutex::new((JobStatus::Queued, None)),
         progress: Mutex::new(Progress::default()),
@@ -766,7 +768,7 @@ fn base_job(url: String, title: String, folder: Option<String>) -> Job {
         kind: JobKind::File, // caller narrows before sharing
         engine: "aria2".into(),
         url,
-        title,
+        title: Mutex::new(title),
         folder,
         status: Mutex::new((JobStatus::Queued, None)),
         progress: Mutex::new(Progress::default()),
@@ -814,7 +816,7 @@ pub async fn start_file(
         &app,
         &job.id,
         JobStatus::Queued,
-        Some(job.title.clone()),
+        Some(job.title.lock().await.clone()),
         None,
     );
     register_job(&queue, job.clone());
@@ -892,7 +894,7 @@ pub async fn start_torrent(
                                 &app,
                                 &job.id,
                                 JobStatus::Queued,
-                                Some(job.title.clone()),
+                                Some(job.title.lock().await.clone()),
                                 None,
                             );
                             register_job(&queue, job.clone());
@@ -957,7 +959,7 @@ pub async fn start_torrent(
         &app,
         &job.id,
         JobStatus::Queued,
-        Some(job.title.clone()),
+        Some(job.title.lock().await.clone()),
         None,
     );
     register_job(&queue, job.clone());
@@ -1016,6 +1018,17 @@ async fn run_aria2_job(
             && !status.is_metadata_only()
         {
             metadata_announced = true;
+            let display_name = status.torrent_name().unwrap_or_else(|| "Torrent".into());
+            *job.title.lock().await = display_name.clone();
+            let _ = app.emit(
+                EVENT_STATE,
+                StateEvent {
+                    id: job.id.clone(),
+                    status: JobStatus::Queued,
+                    title: Some(display_name.clone()),
+                    error: None,
+                },
+            );
             let files: Vec<TorrentFileInfo> = status
                 .files
                 .iter()
@@ -1030,7 +1043,7 @@ async fn run_aria2_job(
                 EVENT_TORRENT_READY,
                 TorrentReadyEvent {
                     job_id: job.id.clone(),
-                    name: status.torrent_name().unwrap_or_else(|| "Torrent".into()),
+                    name: display_name,
                     files,
                 },
             );
@@ -1038,10 +1051,31 @@ async fn run_aria2_job(
 
         match status.status.as_str() {
             "active" => {
+                // A finished BitTorrent task keeps "active" while seeding;
+                // surface that instead of a stuck "Downloading" at 100%.
+                let seeding = job.kind == JobKind::Torrent
+                    && status.total() > 0
+                    && status.completed() >= status.total();
                 {
                     let mut s = job.status.lock().await;
-                    if s.0 != JobStatus::Downloading && s.0 != JobStatus::Merging {
-                        s.0 = JobStatus::Downloading;
+                    let want = if seeding {
+                        JobStatus::Seeding
+                    } else if s.0 != JobStatus::Downloading && s.0 != JobStatus::Merging {
+                        JobStatus::Downloading
+                    } else {
+                        s.0.clone()
+                    };
+                    if want != s.0 {
+                        s.0 = want.clone();
+                        let _ = app.emit(
+                            EVENT_STATE,
+                            StateEvent {
+                                id: job.id.clone(),
+                                status: want,
+                                title: None,
+                                error: None,
+                            },
+                        );
                     }
                 }
                 {
@@ -1126,7 +1160,7 @@ async fn record_history(app: &AppHandle, job: &Job, status: JobStatus, total_byt
         },
         engine: job.engine.clone(),
         url: job.url.clone(),
-        title: job.title.clone(),
+        title: job.title.lock().await.clone(),
         folder: job.folder.clone(),
         filename: view.filename,
         status: match status {
@@ -1159,9 +1193,10 @@ pub async fn torrent_files(
     let gid = job.gid.lock().await.clone().ok_or("job has no gid yet")?;
     let daemon = ensure_aria2(&app).await?;
     let status = daemon.tell_status(&gid).await.map_err(|e| e.to_string())?;
+    let fallback_title = job.title.lock().await.clone();
     Ok(TorrentReadyEvent {
         job_id: job.id.clone(),
-        name: status.torrent_name().unwrap_or_else(|| job.title.clone()),
+        name: status.torrent_name().unwrap_or_else(|| fallback_title),
         files: status
             .files
             .iter()

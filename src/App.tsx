@@ -1,0 +1,76 @@
+import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { CommandPalette, useGlobalHotkeys } from "@/components/layout/CommandPalette";
+import { Header } from "@/components/layout/Header";
+import { Sidebar } from "@/components/layout/Sidebar";
+import { TitleBar } from "@/components/layout/TitleBar";
+import { TooltipProvider, Toaster } from "@/components/ui";
+import { isPageId, type PageId } from "@/lib/navigation";
+import { About } from "@/pages/About";
+import { Dashboard } from "@/pages/Dashboard";
+import { Downloads } from "@/pages/Downloads";
+import { Files } from "@/pages/Files";
+import { History } from "@/pages/History";
+import { Presets } from "@/pages/Presets";
+import { Settings } from "@/pages/Settings";
+import { Video } from "@/pages/Video";
+import { bootstrapUi } from "@/stores/ui";
+
+const PAGE_STORAGE_KEY = "gruzly.page";
+
+export default function App() {
+  const { t } = useTranslation();
+  const [page, setPage] = useState<PageId>(() => {
+    try {
+      const stored = localStorage.getItem(PAGE_STORAGE_KEY);
+      if (stored && isPageId(stored)) return stored;
+    } catch {
+      /* ignore */
+    }
+    return "dashboard";
+  });
+
+  const navigate = (next: PageId) => {
+    setPage(next);
+    try {
+      localStorage.setItem(PAGE_STORAGE_KEY, next);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  useGlobalHotkeys(navigate);
+
+  useEffect(() => {
+    document.title = `${t("app.name")} — ${t(`nav.${page}`)}`;
+  }, [t, page]);
+
+  return (
+    <TooltipProvider delayDuration={350}>
+      <div className="flex h-full flex-col">
+        <TitleBar />
+        <div className="flex min-h-0 flex-1">
+          <Sidebar page={page} onNavigate={navigate} />
+          <main className="flex min-w-0 flex-1 flex-col">
+            <Header page={page} />
+            <div className="min-h-0 flex-1 overflow-y-auto" data-density-root>
+              {page === "dashboard" && <Dashboard onNavigate={navigate} />}
+              {page === "downloads" && <Downloads />}
+              {page === "video" && <Video />}
+              {page === "files" && <Files />}
+              {page === "history" && <History />}
+              {page === "presets" && <Presets />}
+              {page === "settings" && <Settings />}
+              {page === "about" && <About />}
+            </div>
+          </main>
+        </div>
+        <CommandPalette onNavigate={navigate} />
+        <Toaster />
+      </div>
+    </TooltipProvider>
+  );
+}
+
+// Bootstrap theme/locale before the first React render.
+bootstrapUi();

@@ -1,0 +1,448 @@
+{
+  "app": {
+    "name": "Gruzly",
+    "tagline": "Менеджер загрузок нового поколения"
+  },
+  "nav": {
+    "dashboard": "Главная",
+    "downloads": "Загрузки",
+    "video": "Видео",
+    "files": "Файлы и торренты",
+    "history": "История",
+    "presets": "Пресеты",
+    "settings": "Настройки",
+    "about": "О программе",
+    "collapse": "Свернуть панель",
+    "expand": "Развернуть панель",
+    "section": "Раздел"
+  },
+  "common": {
+    "paste": "Вставить",
+    "pasteLink": "Вставить ссылку",
+    "download": "Скачать",
+    "addToQueue": "В очередь",
+    "cancel": "Отмена",
+    "pause": "Пауза",
+    "resume": "Продолжить",
+    "retry": "Повторить",
+    "remove": "Убрать",
+    "removeFromList": "Убрать из списка",
+    "deleteFile": "Удалить файл",
+    "openFolder": "Открыть папку",
+    "openFile": "Открыть файл",
+    "clear": "Очистить",
+    "clearAll": "Очистить всё",
+    "export": "Экспорт",
+    "search": "Поиск",
+    "save": "Сохранить",
+    "saved": "Сохранено",
+    "edit": "Изменить",
+    "delete": "Удалить",
+    "close": "Закрыть",
+    "copy": "Копировать",
+    "copied": "Скопировано",
+    "refresh": "Обновить",
+    "selectAll": "Выбрать все",
+    "deselectAll": "Снять выделение",
+    "apply": "Применить",
+    "confirm": "Подтвердить",
+    "back": "Назад",
+    "update": "Обновить",
+    "updating": "Обновление…",
+    "browse": "Выбрать…",
+    "more": "Ещё",
+    "optional": "необязательно",
+    "status": {
+      "queued": "В очереди",
+      "analyzing": "Анализ",
+      "downloading": "Скачивается",
+      "merging": "Склейка",
+      "paused": "Пауза",
+      "completed": "Завершено",
+      "failed": "Ошибка",
+      "canceled": "Отменено",
+      "seeding": "Раздача"
+    },
+    "emptyTitle": "Пока пусто",
+    "emptyHint": "Вставьте ссылку, чтобы начать"
+  },
+  "dashboard": {
+    "title": "Главная",
+    "subtitle": "Всё важное — сразу",
+    "quickPaste": {
+      "label": "Быстрое добавление",
+      "placeholder": "Вставьте ссылку — видео, файл или magnet…",
+      "button": "Анализировать",
+      "dropHint": "Перетащите ссылки или .torrent-файл сюда"
+    },
+    "stats": {
+      "today": "Сегодня",
+      "downloaded": "Скачано",
+      "completedJobs": "Завершено",
+      "activeJobs": "Активно",
+      "averageSpeed": "Средняя скорость",
+      "noData": "Сегодня загрузок ещё не было"
+    },
+    "engines": {
+      "title": "Движки",
+      "subtitle": "Работают на open-source",
+      "upToDate": "Актуальны",
+      "checking": "Проверка…",
+      "updating": "Обновление…",
+      "outdated": "Есть обновление",
+      "missing": "Не найден",
+      "updateAll": "Обновить движки",
+      "updatedAt": "Проверено в {{time}}"
+    },
+    "activeTasks": {
+      "title": "Активные задачи",
+      "empty": "Активных задач нет",
+      "emptyHint": "Здесь появятся текущие загрузки",
+      "seeAll": "Показать все"
+    }
+  },
+  "downloads": {
+    "title": "Загрузки",
+    "tabs": {
+      "active": "Активные",
+      "queued": "Очередь",
+      "completed": "Завершённые"
+    },
+    "searchPlaceholder": "Поиск по загрузкам…",
+    "filterAll": "Все",
+    "filterVideo": "Видео",
+    "filterFile": "Файлы",
+    "filterTorrent": "Торренты",
+    "empty": {
+      "active": "Нет активных загрузок",
+      "activeHint": "Вставьте ссылку на Главной или в разделе Видео",
+      "queued": "Очередь пуста",
+      "queuedHint": "Здесь будут задачи, ожидающие запуска",
+      "completed": "Пока ничего не завершено",
+      "completedHint": "Завершённые загрузки появятся здесь"
+    },
+    "limits": {
+      "speedLimit": "Лимит скорости",
+      "unlimited": "Без лимита",
+      "parallel": "Параллельные задачи"
+    },
+    "details": {
+      "title": "Детали задачи",
+      "engine": "Движок",
+      "url": "Источник",
+      "saveTo": "Папка",
+      "startedAt": "Начало",
+      "finishedAt": "Завершение",
+      "size": "Размер",
+      "speed": "Скорость",
+      "eta": "Осталось",
+      "peers": "Пиры",
+      "seeds": "Сиды",
+      "ratio": "Ратио"
+    }
+  },
+  "video": {
+    "title": "Видео",
+    "subtitle": "Предпросмотр перед скачиванием",
+    "analyze": {
+      "placeholder": "Вставьте ссылку на видео — YouTube, Rutube, VK Видео…",
+      "button": "Анализировать",
+      "analyzing": "Анализируем ссылку…",
+      "pasteFromClipboard": "Вставить из буфера"
+    },
+    "preview": {
+      "title": "Предпросмотр",
+      "download": "Скачать",
+      "queue": "В очередь",
+      "cancel": "Отмена",
+      "views": "{{count}} просмотр",
+      "views_few": "{{count}} просмотра",
+      "views_many": "{{count}} просмотров",
+      "views_other": "{{count}} просмотров",
+      "formats": {
+        "title": "Форматы",
+        "quality": "Качество",
+        "fps": "FPS",
+        "codec": "Кодек",
+        "container": "Контейнер",
+        "size": "Примерный размер",
+        "hdr": "HDR",
+        "subtitles": "Субтитры",
+        "audio": "Аудиодорожка",
+        "noSubtitles": "Нет субтитров",
+        "auto": "автосозданные"
+      },
+      "presets": {
+        "title": "Быстрые пресеты",
+        "best": "Лучшее",
+        "f1080": "1080p",
+        "f720": "720p",
+        "audioOnly": "Только аудио"
+      },
+      "playlist": {
+        "title": "Плейлист",
+        "items": "{{count}} ролик",
+        "items_few": "{{count}} ролика",
+        "items_many": "{{count}} роликов",
+        "items_other": "{{count}} роликов",
+        "selected": "Выбран {{count}}",
+        "selected_few": "Выбрано {{count}}",
+        "selected_many": "Выбрано {{count}}",
+        "selected_other": "Выбрано {{count}}",
+        "loadMore": "Загрузить ещё",
+        "expand": "Показать плейлист",
+        "collapse": "Скрыть плейлист"
+      }
+    },
+    "empty": {
+      "title": "Проанализируйте ссылку на видео",
+      "hint": "Вставьте ссылку с 1000+ поддерживаемых сайтов — предпросмотр, выбор качества, скачивание",
+      "sites": "Поддерживаются: YouTube, Rutube, VK Видео, OK, Dzen, Twitch, Bilibili и другие"
+    }
+  },
+  "files": {
+    "title": "Файлы и торренты",
+    "subtitle": "Прямые загрузки и торренты",
+    "add": {
+      "placeholder": "Вставьте ссылку на файл (HTTP/HTTPS/FTP) или magnet…",
+      "button": "Добавить",
+      "batch": "Пакетно",
+      "batchPlaceholder": "По одной ссылке в строке…",
+      "torrentButton": "Открыть .torrent…",
+      "dropHint": "Перетащите ссылки или .torrent-файлы в любое место"
+    },
+    "torrent": {
+      "selectFiles": "Выберите файлы раздачи",
+      "totalSize": "Общий размер",
+      "selectedSize": "Выбрано",
+      "infoHash": "Info-хеш",
+      "trackers": "Трекеры",
+      "ratioLimit": "Лимит ратио"
+    },
+    "empty": {
+      "title": "Нет загрузок файлов",
+      "hint": "Вставьте прямую ссылку или откройте .torrent-файл",
+      "magnetHint": "Magnet-ссылки открываются автоматически"
+    }
+  },
+  "history": {
+    "title": "История",
+    "subtitle": "Всё, что вы скачивали",
+    "searchPlaceholder": "Поиск по истории…",
+    "filterType": "Тип",
+    "typeAll": "Все типы",
+    "filterDate": "Период",
+    "dateAll": "За всё время",
+    "dateToday": "Сегодня",
+    "dateWeek": "За 7 дней",
+    "dateMonth": "За 30 дней",
+    "redownload": "Скачать снова",
+    "exportCsv": "Экспорт CSV",
+    "clearConfirm": {
+      "title": "Очистить историю?",
+      "body": "Все записи истории будут удалены. Скачанные файлы останутся на диске.",
+      "confirm": "Очистить",
+      "cancel": "Оставить"
+    },
+    "empty": {
+      "title": "История пуста",
+      "hint": "Здесь появятся завершённые загрузки"
+    }
+  },
+  "presets": {
+    "title": "Пресеты",
+    "subtitle": "Скачивание в один клик",
+    "create": "Новый пресет",
+    "edit": "Изменить пресет",
+    "delete": "Удалить пресет",
+    "defaultBadge": "По умолчанию",
+    "setDefault": "Сделать основным",
+    "fields": {
+      "name": "Название",
+      "namePlaceholder": "например, «Музыка 320 kbps»",
+      "kind": "Применяется к",
+      "kindVideo": "Видео",
+      "kindFile": "Файлам",
+      "quality": "Качество",
+      "qualityBest": "Лучшее доступное",
+      "qualityAudio": "Только аудио",
+      "format": "Формат",
+      "folder": "Папка",
+      "folderPlaceholder": "Папка по умолчанию",
+      "domain": "Применять автоматически на домене",
+      "domainPlaceholder": "например, youtube.com"
+    },
+    "empty": {
+      "title": "Пресетов пока нет",
+      "hint": "Создайте пресет — качество, формат и папка в одном рецепте для скачивания в один клик"
+    },
+    "deleteConfirm": {
+      "title": "Удалить пресет?",
+      "body": "Пресет «{{name}}» будет удалён. Активные загрузки не пострадают."
+    }
+  },
+  "settings": {
+    "title": "Настройки",
+    "sections": {
+      "general": "Общие",
+      "appearance": "Внешний вид",
+      "downloads": "Загрузки",
+      "engines": "Движки",
+      "integrations": "Интеграции",
+      "hotkeys": "Горячие клавиши"
+    },
+    "general": {
+      "folder": "Папка загрузок",
+      "choose": "Изменить…",
+      "startup": "Запускать при входе в систему",
+      "startupHint": "Стартует свернутым при загрузке ОС",
+      "tray": "Сворачивать в трей",
+      "trayHint": "Закрытие окна не останавливает загрузки",
+      "notifications": "Показывать уведомления",
+      "notificationsHint": "Когда загрузка завершается или падает"
+    },
+    "appearance": {
+      "theme": "Тема",
+      "themeDark": "Тёмная",
+      "themeLight": "Светлая",
+      "themeSystem": "Системная",
+      "language": "Язык",
+      "accentColor": "Акцентный цвет",
+      "accentCyan": "Циан",
+      "accentViolet": "Фиолетовый",
+      "accentEmerald": "Изумрудный",
+      "accentAmber": "Янтарный",
+      "density": "Плотность",
+      "densityCozy": "Свободная",
+      "densityCompact": "Компактная",
+      "densityHint": "В компактной помещается больше строк"
+    },
+    "downloads": {
+      "parallel": "Параллельные загрузки",
+      "connections": "Соединений на файл",
+      "connectionsHint": "Больше соединений может ускорить большие файлы",
+      "speedLimit": "Лимит скорости",
+      "unlimited": "Без лимита",
+      "filenameTemplate": "Шаблон имени файла",
+      "templateHint": "Доступны переменные: {{title}}, {{uploader}}, {{id}}, {{date}}",
+      "seedRatio": "Останавливать раздачу при ратио",
+      "seedRatioHint": "0 — раздавать бесконечно"
+    },
+    "engines": {
+      "title": "Движки",
+      "hint": "Gruzly работает на yt-dlp, aria2 и ffmpeg",
+      "version": "Версия",
+      "status": "Статус",
+      "update": "Обновить",
+      "updateAll": "Обновить все",
+      "autoUpdate": "Обновлять yt-dlp при каждом запуске",
+      "autoUpdateHint": "Экстракторы регулярно ломаются — авто-обновление держит скачивание видео рабочим",
+      "upToDate": "Актуальна",
+      "outdated": "Доступно обновление",
+      "missing": "Не найден",
+      "updating": "Обновляется…",
+      "lastCheck": "Последняя проверка: {{time}}",
+      "checkNow": "Проверить сейчас"
+    },
+    "integrations": {
+      "cookies": "Использовать cookies браузера",
+      "cookiesHint": "Для видео с возрастными ограничениями. Cookies не покидают устройство и не попадают в логи.",
+      "cookiesBrowser": "Браузер",
+      "sponsorblock": "Пропускать рекламные вставки (SponsorBlock)",
+      "sponsorblockHint": "Пропускает встроенную рекламу и интро, где это поддерживается",
+      "proxy": "Использовать прокси",
+      "proxyHost": "Хост",
+      "proxyPort": "Порт",
+      "proxyType": "Тип"
+    },
+    "hotkeys": {
+      "title": "Горячие клавиши",
+      "hint": "Нажмите на сочетание, чтобы переназначить",
+      "pressNew": "Нажмите новое сочетание…",
+      "reset": "Сбросить по умолчанию",
+      "actions": {
+        "palette": "Открыть палитру команд",
+        "paste": "Вставить и проанализировать ссылку",
+        "pauseAll": "Приостановить все загрузки",
+        "resumeAll": "Возобновить все загрузки",
+        "openDownloads": "Перейти в Загрузки",
+        "openVideo": "Перейти в Видео",
+        "toggleTheme": "Переключить тему"
+      }
+    }
+  },
+  "about": {
+    "title": "О Gruzly",
+    "version": "Версия",
+    "tagline": "Быстрый и красивый менеджер загрузок: файлы, торренты и видео с 1000+ сайтов.",
+    "disclaimer": {
+      "title": "Правовая информация",
+      "body": "Скачивайте только тот контент, права на который у вас есть. Gruzly не поддерживает и никак не обходит DRM или иные технологии защиты копирайта. Уважайте авторские права и правила сервисов."
+    },
+    "engines": "Построено на open source",
+    "enginesHint": "Gruzly — оболочка вокруг этих замечательных инструментов:",
+    "license": "Gruzly распространяется по лицензии MIT.",
+    "repo": "Исходный код",
+    "checkUpdates": "Проверить обновления"
+  },
+  "palette": {
+    "placeholder": "Введите команду…",
+    "empty": "Команды не найдены",
+    "groups": {
+      "nav": "Навигация",
+      "actions": "Действия",
+      "settings": "Настройки"
+    }
+  },
+  "titlebar": {
+    "minimize": "Свернуть",
+    "maximize": "Развернуть",
+    "restore": "Восстановить",
+    "close": "Закрыть"
+  },
+  "tray": {
+    "show": "Открыть Gruzly",
+    "pauseAll": "Пауза всех",
+    "resumeAll": "Продолжить все",
+    "quit": "Выйти из Gruzly"
+  },
+  "toasts": {
+    "themeChanged": "Тема: {{theme}}",
+    "languageChanged": "Язык переключён",
+    "linkCopied": "Ссылка скопирована в буфер",
+    "addedToQueue": "Добавлено в очередь ({{count}})",
+    "addedToQueue_plural": "Добавлено в очередь ({{count}})",
+    "downloadStarted": "Загрузка началась",
+    "downloadCompleted": "Загрузка завершена",
+    "downloadFailed": "Загрузка не удалась",
+    "enginesUpdated": "Движки обновлены",
+    "settingsSaved": "Настройки сохранены",
+    "historyCleared": "История очищена",
+    "presetSaved": "Пресет сохранён",
+    "presetDeleted": "Пресет удалён",
+    "invalidUrl": "Похоже, это не ссылка",
+    "copiedPath": "Путь скопирован"
+  },
+  "errors": {
+    "title": "Что-то пошло не так",
+    "generic": "Непредвиденная ошибка. Попробуйте ещё раз.",
+    "retry": "Повторить",
+    "details": "Подробнее",
+    "engineMissing": "{{engine}} не найден. Откройте Настройки → Движки, чтобы восстановить.",
+    "ffmpegMissingHint": "Для склейки видео и аудио нужен ffmpeg. Установите его в Настройки → Движки.",
+    "ytdlpOutdated": "yt-dlp устарел — обновление обычно решает проблему.",
+    "network": "Ошибка сети. Проверьте подключение и попробуйте снова.",
+    "diskFull": "Недостаточно места на диске.",
+    "noPermission": "Нет прав на запись в эту папку. Выберите другую папку в Настройках.",
+    "urlInvalid": "Похоже, это не ссылка",
+    "urlUnsupported": "Этот сайт не поддерживается для анализа видео. Попробуйте прямую ссылку на файл.",
+    "analysisFailed": "Не удалось проанализировать ссылку. Сайт может быть недоступен или не поддерживаться.",
+    "rpcFailed": "Движок загрузок не отвечает. Обычно помогает его перезапуск."
+  },
+  "format": {
+    "perSecond": "{{value}}/с",
+    "eta": "осталось {{value}}",
+    "etaDone": "почти готово",
+    "of": "{{done}} из {{total}}"
+  }
+}

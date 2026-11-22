@@ -1,0 +1,20 @@
+# Node
+node_modules/
+dist/
+
+# Tauri / Rust
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# Sidecar engines (fetched by scripts/fetch-engines.mjs, never committed)
+src-tauri/binaries/
+
+# Local artifacts
+*.log
+.vetting/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

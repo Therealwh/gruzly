@@ -1,0 +1,242 @@
+@import url("@fontsource/inter/latin-400.css");
+@import url("@fontsource/inter/latin-500.css");
+@import url("@fontsource/inter/latin-600.css");
+@import url("@fontsource/inter/cyrillic-400.css");
+@import url("@fontsource/inter/cyrillic-500.css");
+@import url("@fontsource/inter/cyrillic-600.css");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+   Design tokens — one system, two themes.
+   Dark (default): deep navy, glass panels, cyan→violet accents.
+   Light: airy, carefully contrasted — not an inverted dark.
+   ============================================================ */
+
+:root,
+.dark {
+  --bg: #0b0f1a;
+  --bg-veil: rgb(11 15 26 / 60%);
+  --surface: rgb(17 24 40 / 72%); /* glass panel */
+  --surface-2: rgb(23 31 50 / 72%);
+  --surface-3: rgb(30 40 63 / 72%);
+  --surface-opaque: #121a2c;
+  --surface-2-opaque: #182238;
+  --border: rgb(255 255 255 / 7%);
+  --border-strong: rgb(255 255 255 / 12%);
+
+  --text: #e7ebf4;
+  --text-secondary: #a7b0c4;
+  --text-muted: #78829b;
+  --text-disabled: #4d5568;
+  --text-on-accent: #ffffff;
+
+  --accent: #22d3ee; /* cyan-400 */
+  --accent-hover: #67e3f9;
+  --accent-2: #a78bfa; /* violet-400 */
+  --accent-soft: rgb(34 211 238 / 12%);
+  --accent-gradient: linear-gradient(135deg, #22d3ee 0%, #818cf8 55%, #a78bfa 100%);
+  --accent-text: #67e3f9; /* accent as text color (AA on dark bg) */
+
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --info: #60a5fa;
+
+  --shadow-panel: 0 1px 0 rgb(255 255 255 / 3%) inset, 0 8px 24px rgb(2 6 16 / 45%);
+  --shadow-pop: 0 4px 12px rgb(2 6 16 / 40%), 0 16px 48px rgb(2 6 16 / 55%);
+  --shadow-glow: 0 0 0 1px rgb(255 255 255 / 6%), 0 0 24px rgb(34 211 238 / 12%);
+  --shadow-glow-accent: 0 0 20px rgb(34 211 238 / 25%), 0 0 48px rgb(167 139 250 / 15%);
+  --shadow-inset: inset 0 1px 0 rgb(255 255 255 / 5%);
+
+  --skeleton-base: rgb(255 255 255 / 6%);
+  --skeleton-shine: rgb(255 255 255 / 12%);
+
+  --scrollbar-thumb: rgb(255 255 255 / 14%);
+  --scrollbar-thumb-hover: rgb(255 255 255 / 22%);
+
+  color-scheme: dark;
+}
+
+.light {
+  --bg: #f5f6fa;
+  --bg-veil: rgb(245 246 250 / 65%);
+  --surface: rgb(255 255 255 / 82%);
+  --surface-2: rgb(255 255 255 / 95%);
+  --surface-3: rgb(240 243 249 / 95%);
+  --surface-opaque: #ffffff;
+  --surface-2-opaque: #f7f8fc;
+  --border: rgb(15 23 42 / 8%);
+  --border-strong: rgb(15 23 42 / 14%);
+
+  --text: #101828;
+  --text-secondary: #475467;
+  --text-muted: #667085;
+  --text-disabled: #98a2b3;
+  --text-on-accent: #ffffff;
+
+  --accent: #0891b2; /* cyan-600 — AA on light */
+  --accent-hover: #0e7490;
+  --accent-2: #7c3aed; /* violet-600 */
+  --accent-soft: rgb(8 145 178 / 10%);
+  --accent-gradient: linear-gradient(135deg, #0891b2 0%, #6366f1 55%, #7c3aed 100%);
+  --accent-text: #0e7490;
+
+  --success: #16a34a;
+  --warning: #b45309;
+  --danger: #dc2626;
+  --info: #2563eb;
+
+  --shadow-panel: 0 1px 2px rgb(16 24 40 / 5%), 0 4px 16px rgb(16 24 40 / 7%);
+  --shadow-pop: 0 4px 10px rgb(16 24 40 / 8%), 0 16px 40px rgb(16 24 40 / 12%);
+  --shadow-glow: 0 0 0 1px rgb(16 24 40 / 6%), 0 0 24px rgb(8 145 178 / 8%);
+  --shadow-glow-accent: 0 0 16px rgb(8 145 178 / 18%), 0 0 40px rgb(124 58 237 / 10%);
+  --shadow-inset: inset 0 1px 0 rgb(255 255 255 / 60%);
+
+  --skeleton-base: rgb(16 24 40 / 6%);
+  --skeleton-shine: rgb(16 24 40 / 12%);
+
+  --scrollbar-thumb: rgb(16 24 40 / 18%);
+  --scrollbar-thumb-hover: rgb(16 24 40 / 28%);
+
+  color-scheme: light;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-bg text-text font-sans text-[13px] leading-relaxed antialiased;
+    overscroll-behavior: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  /* Only designated text should be selectable */
+  [data-selectable] {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+
+  ::selection {
+    background: var(--accent-soft);
+    color: var(--text);
+  }
+
+  /* Quiet, themed scrollbars */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 8px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-thumb-hover);
+    background-clip: content-box;
+  }
+
+  /* Focus visibility — keyboard navigation everywhere */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  button,
+  [role="button"] {
+    cursor: default;
+  }
+  button:disabled,
+  [role="button"][aria-disabled="true"] {
+    cursor: default;
+  }
+
+  input,
+  textarea {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+}
+
+@layer utilities {
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+
+  .glass {
+    background: var(--surface);
+    backdrop-filter: blur(16px) saturate(1.4);
+    -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  }
+
+  .glass-strong {
+    background: var(--surface-2);
+    backdrop-filter: blur(24px) saturate(1.5);
+    -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  }
+
+  .accent-gradient {
+    background-image: var(--accent-gradient);
+  }
+
+  .accent-gradient-text {
+    background-image: var(--accent-gradient);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .skeleton {
+    background: linear-gradient(
+      100deg,
+      var(--skeleton-base) 40%,
+      var(--skeleton-shine) 50%,
+      var(--skeleton-base) 60%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.4s linear infinite;
+    border-radius: 6px;
+  }
+
+  .drag-region {
+    app-region: drag;
+    -webkit-app-region: drag;
+  }
+  .no-drag {
+    app-region: no-drag;
+    -webkit-app-region: no-drag;
+  }
+}
+
+/* Respect users who prefer reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -1,0 +1,442 @@
+{
+  "app": {
+    "name": "Gruzly",
+    "tagline": "Download manager of the new generation"
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "downloads": "Downloads",
+    "video": "Video",
+    "files": "Files & Torrents",
+    "history": "History",
+    "presets": "Presets",
+    "settings": "Settings",
+    "about": "About",
+    "collapse": "Collapse sidebar",
+    "expand": "Expand sidebar",
+    "section": "Section"
+  },
+  "common": {
+    "paste": "Paste",
+    "pasteLink": "Paste link",
+    "download": "Download",
+    "addToQueue": "Add to queue",
+    "cancel": "Cancel",
+    "pause": "Pause",
+    "resume": "Resume",
+    "retry": "Retry",
+    "remove": "Remove",
+    "removeFromList": "Remove from list",
+    "deleteFile": "Delete file",
+    "openFolder": "Open folder",
+    "openFile": "Open file",
+    "clear": "Clear",
+    "clearAll": "Clear all",
+    "export": "Export",
+    "search": "Search",
+    "save": "Save",
+    "saved": "Saved",
+    "edit": "Edit",
+    "delete": "Delete",
+    "close": "Close",
+    "copy": "Copy",
+    "copied": "Copied",
+    "refresh": "Refresh",
+    "selectAll": "Select all",
+    "deselectAll": "Deselect all",
+    "apply": "Apply",
+    "confirm": "Confirm",
+    "back": "Back",
+    "update": "Update",
+    "updating": "Updating…",
+    "browse": "Browse…",
+    "more": "More",
+    "optional": "optional",
+    "status": {
+      "queued": "Queued",
+      "analyzing": "Analyzing",
+      "downloading": "Downloading",
+      "merging": "Merging",
+      "paused": "Paused",
+      "completed": "Completed",
+      "failed": "Failed",
+      "canceled": "Canceled",
+      "seeding": "Seeding"
+    },
+    "emptyTitle": "Nothing here yet",
+    "emptyHint": "Paste a link to get started"
+  },
+  "dashboard": {
+    "title": "Dashboard",
+    "subtitle": "Everything at a glance",
+    "quickPaste": {
+      "label": "Quick add",
+      "placeholder": "Paste a link — video, file or magnet…",
+      "button": "Analyze",
+      "dropHint": "Drop links or a .torrent file here"
+    },
+    "stats": {
+      "today": "Today",
+      "downloaded": "Downloaded",
+      "completedJobs": "Completed",
+      "activeJobs": "Active",
+      "averageSpeed": "Avg. speed",
+      "noData": "No downloads yet today"
+    },
+    "engines": {
+      "title": "Engines",
+      "subtitle": "Powered by open-source tools",
+      "upToDate": "Up to date",
+      "checking": "Checking…",
+      "updating": "Updating…",
+      "outdated": "Update available",
+      "missing": "Not found",
+      "updateAll": "Update engines",
+      "updatedAt": "Checked {{time}}"
+    },
+    "activeTasks": {
+      "title": "Active tasks",
+      "empty": "No active tasks",
+      "emptyHint": "Downloads will show up here",
+      "seeAll": "See all"
+    }
+  },
+  "downloads": {
+    "title": "Downloads",
+    "tabs": {
+      "active": "Active",
+      "queued": "Queued",
+      "completed": "Completed"
+    },
+    "searchPlaceholder": "Search downloads…",
+    "filterAll": "All",
+    "filterVideo": "Video",
+    "filterFile": "Files",
+    "filterTorrent": "Torrents",
+    "empty": {
+      "active": "No active downloads",
+      "activeHint": "Paste a link on the Dashboard or in Video",
+      "queued": "Queue is empty",
+      "queuedHint": "Tasks waiting to start will show up here",
+      "completed": "Nothing completed yet",
+      "completedHint": "Finished downloads will be listed here"
+    },
+    "limits": {
+      "speedLimit": "Speed limit",
+      "unlimited": "Unlimited",
+      "parallel": "Parallel tasks"
+    },
+    "details": {
+      "title": "Task details",
+      "engine": "Engine",
+      "url": "Source",
+      "saveTo": "Save to",
+      "startedAt": "Started",
+      "finishedAt": "Finished",
+      "size": "Size",
+      "speed": "Speed",
+      "eta": "Time remaining",
+      "peers": "Peers",
+      "seeds": "Seeds",
+      "ratio": "Ratio"
+    }
+  },
+  "video": {
+    "title": "Video",
+    "subtitle": "Preview before you download",
+    "analyze": {
+      "placeholder": "Paste a video link — YouTube, Rutube, VK Video…",
+      "button": "Analyze",
+      "analyzing": "Analyzing link…",
+      "pasteFromClipboard": "Paste from clipboard"
+    },
+    "preview": {
+      "title": "Preview",
+      "download": "Download",
+      "queue": "Add to queue",
+      "cancel": "Cancel",
+      "views": "{{count}} view",
+      "views_plural": "{{count}} views",
+      "formats": {
+        "title": "Formats",
+        "quality": "Quality",
+        "fps": "FPS",
+        "codec": "Codec",
+        "container": "Container",
+        "size": "Approx. size",
+        "hdr": "HDR",
+        "subtitles": "Subtitles",
+        "audio": "Audio track",
+        "noSubtitles": "No subtitles",
+        "auto": "auto-generated"
+      },
+      "presets": {
+        "title": "Quick presets",
+        "best": "Best",
+        "f1080": "1080p",
+        "f720": "720p",
+        "audioOnly": "Audio only"
+      },
+      "playlist": {
+        "title": "Playlist",
+        "items": "{{count}} video",
+        "items_plural": "{{count}} videos",
+        "selected": "{{count}} selected",
+        "selected_plural": "{{count}} selected",
+        "loadMore": "Load more",
+        "expand": "Show playlist",
+        "collapse": "Hide playlist"
+      }
+    },
+    "empty": {
+      "title": "Analyze a video link",
+      "hint": "Paste any link from 1000+ supported sites — preview it, pick quality, then download",
+      "sites": "Supported: YouTube, Rutube, VK Video, OK, Dzen, Twitch, Bilibili and more"
+    }
+  },
+  "files": {
+    "title": "Files & Torrents",
+    "subtitle": "Direct downloads and torrents",
+    "add": {
+      "placeholder": "Paste a file URL (HTTP/HTTPS/FTP) or magnet link…",
+      "button": "Add",
+      "batch": "Batch add",
+      "batchPlaceholder": "One link per line…",
+      "torrentButton": "Open .torrent…",
+      "dropHint": "Drop links or .torrent files anywhere"
+    },
+    "torrent": {
+      "selectFiles": "Select files to download",
+      "totalSize": "Total size",
+      "selectedSize": "Selected",
+      "infoHash": "Info hash",
+      "trackers": "Trackers",
+      "ratioLimit": "Ratio limit"
+    },
+    "empty": {
+      "title": "No file downloads",
+      "hint": "Paste a direct link or open a .torrent file",
+      "magnetHint": "Magnet links open automatically"
+    }
+  },
+  "history": {
+    "title": "History",
+    "subtitle": "Everything you've downloaded",
+    "searchPlaceholder": "Search history…",
+    "filterType": "Type",
+    "typeAll": "All types",
+    "filterDate": "Period",
+    "dateAll": "All time",
+    "dateToday": "Today",
+    "dateWeek": "Last 7 days",
+    "dateMonth": "Last 30 days",
+    "redownload": "Download again",
+    "exportCsv": "Export CSV",
+    "clearConfirm": {
+      "title": "Clear history?",
+      "body": "This removes all history records. Downloaded files stay on disk.",
+      "confirm": "Clear",
+      "cancel": "Keep"
+    },
+    "empty": {
+      "title": "History is empty",
+      "hint": "Completed downloads will appear here"
+    }
+  },
+  "presets": {
+    "title": "Presets",
+    "subtitle": "One-click download recipes",
+    "create": "New preset",
+    "edit": "Edit preset",
+    "delete": "Delete preset",
+    "defaultBadge": "Default",
+    "setDefault": "Set as default",
+    "fields": {
+      "name": "Name",
+      "namePlaceholder": "e.g. “Music 320 kbps”",
+      "kind": "Applies to",
+      "kindVideo": "Video",
+      "kindFile": "Files",
+      "quality": "Quality",
+      "qualityBest": "Best available",
+      "qualityAudio": "Audio only",
+      "format": "Format",
+      "folder": "Folder",
+      "folderPlaceholder": "Default folder",
+      "domain": "Apply automatically on domain",
+      "domainPlaceholder": "e.g. youtube.com"
+    },
+    "empty": {
+      "title": "No presets yet",
+      "hint": "Create a preset to download with one click — quality, format and folder in one recipe"
+    },
+    "deleteConfirm": {
+      "title": "Delete preset?",
+      "body": "Preset “{{name}}” will be removed. Active downloads are not affected."
+    }
+  },
+  "settings": {
+    "title": "Settings",
+    "sections": {
+      "general": "General",
+      "appearance": "Appearance",
+      "downloads": "Downloads",
+      "engines": "Engines",
+      "integrations": "Integrations",
+      "hotkeys": "Hotkeys"
+    },
+    "general": {
+      "folder": "Download folder",
+      "choose": "Change…",
+      "startup": "Run at system startup",
+      "startupHint": "Starts minimized when you log in",
+      "tray": "Close to system tray",
+      "trayHint": "Closing the window keeps downloads running in the tray",
+      "notifications": "Show notifications",
+      "notificationsHint": "When a download completes or fails"
+    },
+    "appearance": {
+      "theme": "Theme",
+      "themeDark": "Dark",
+      "themeLight": "Light",
+      "themeSystem": "System",
+      "language": "Language",
+      "accentColor": "Accent color",
+      "accentCyan": "Cyan",
+      "accentViolet": "Violet",
+      "accentEmerald": "Emerald",
+      "accentAmber": "Amber",
+      "density": "Density",
+      "densityCozy": "Cozy",
+      "densityCompact": "Compact",
+      "densityHint": "Compact fits more rows on screen"
+    },
+    "downloads": {
+      "parallel": "Parallel downloads",
+      "connections": "Connections per file",
+      "connectionsHint": "More connections can speed up large files",
+      "speedLimit": "Speed limit",
+      "unlimited": "Unlimited",
+      "filenameTemplate": "Filename template",
+      "templateHint": "Available variables: {{title}}, {{uploader}}, {{id}}, {{date}}",
+      "seedRatio": "Stop seeding at ratio",
+      "seedRatioHint": "0 — seed indefinitely"
+    },
+    "engines": {
+      "title": "Engines",
+      "hint": "Gruzly uses yt-dlp, aria2 and ffmpeg under the hood",
+      "version": "Version",
+      "status": "Status",
+      "update": "Update",
+      "updateAll": "Update all",
+      "autoUpdate": "Update yt-dlp automatically at launch",
+      "autoUpdateHint": "Extractors break regularly — auto-update keeps video downloads working",
+      "upToDate": "Up to date",
+      "outdated": "Update available",
+      "missing": "Not found",
+      "updating": "Updating…",
+      "lastCheck": "Last check: {{time}}",
+      "checkNow": "Check now"
+    },
+    "integrations": {
+      "cookies": "Use browser cookies",
+      "cookiesHint": "For age-restricted or members-only videos. Cookies never leave your device and are never logged.",
+      "cookiesBrowser": "Browser",
+      "sponsorblock": "Skip sponsor segments (SponsorBlock)",
+      "sponsorblockHint": "Skips embedded ads and intros when supported by the site",
+      "proxy": "Use proxy",
+      "proxyHost": "Host",
+      "proxyPort": "Port",
+      "proxyType": "Type"
+    },
+    "hotkeys": {
+      "title": "Hotkeys",
+      "hint": "Click a shortcut to reassign it",
+      "pressNew": "Press new keys…",
+      "reset": "Reset to default",
+      "actions": {
+        "palette": "Open command palette",
+        "paste": "Paste and analyze link",
+        "pauseAll": "Pause all downloads",
+        "resumeAll": "Resume all downloads",
+        "openDownloads": "Go to Downloads",
+        "openVideo": "Go to Video",
+        "toggleTheme": "Toggle theme"
+      }
+    }
+  },
+  "about": {
+    "title": "About Gruzly",
+    "version": "Version",
+    "tagline": "A fast, beautiful download manager: files, torrents and video from 1000+ sites.",
+    "disclaimer": {
+      "title": "Legal notice",
+      "body": "Download only content you own or have permission to save. Gruzly does not support, bypass or circumvent DRM or any copy protection in any way. Respect copyright and the terms of the services you use."
+    },
+    "engines": "Built on open source",
+    "enginesHint": "Gruzly is a shell around these wonderful tools:",
+    "license": "Gruzly is released under the MIT license.",
+    "repo": "Source code",
+    "checkUpdates": "Check for updates"
+  },
+  "palette": {
+    "placeholder": "Type a command…",
+    "empty": "No matching commands",
+    "groups": {
+      "nav": "Navigation",
+      "actions": "Actions",
+      "settings": "Settings"
+    }
+  },
+  "titlebar": {
+    "minimize": "Minimize",
+    "maximize": "Maximize",
+    "restore": "Restore",
+    "close": "Close"
+  },
+  "tray": {
+    "show": "Open Gruzly",
+    "pauseAll": "Pause all",
+    "resumeAll": "Resume all",
+    "quit": "Quit Gruzly"
+  },
+  "toasts": {
+    "themeChanged": "Theme: {{theme}}",
+    "languageChanged": "Language changed",
+    "linkCopied": "Link copied to clipboard",
+    "addedToQueue": "Added to queue ({{count}})",
+    "addedToQueue_plural": "Added to queue ({{count}})",
+    "downloadStarted": "Download started",
+    "downloadCompleted": "Download completed",
+    "downloadFailed": "Download failed",
+    "enginesUpdated": "Engines updated",
+    "settingsSaved": "Settings saved",
+    "historyCleared": "History cleared",
+    "presetSaved": "Preset saved",
+    "presetDeleted": "Preset deleted",
+    "invalidUrl": "This doesn't look like a valid link",
+    "copiedPath": "Path copied"
+  },
+  "errors": {
+    "title": "Something went wrong",
+    "generic": "Unexpected error. Please try again.",
+    "retry": "Retry",
+    "details": "Details",
+    "engineMissing": "{{engine}} not found. Open Settings → Engines to restore it.",
+    "ffmpegMissingHint": "ffmpeg is required to merge video and audio. Install it in Settings → Engines.",
+    "ytdlpOutdated": "yt-dlp is outdated — updating it usually fixes this.",
+    "network": "Network error. Check your connection and try again.",
+    "diskFull": "Not enough disk space.",
+    "noPermission": "No permission to write to this folder. Pick another folder in Settings.",
+    "urlInvalid": "This doesn't look like a valid link",
+    "urlUnsupported": "This site isn't supported for video analysis. Try a direct file link instead.",
+    "analysisFailed": "Couldn't analyze this link. The site may be unavailable or unsupported.",
+    "rpcFailed": "Download engine is not responding. Restarting it usually helps."
+  },
+  "format": {
+    "perSecond": "{{value}}/s",
+    "eta": "{{value}} left",
+    "etaDone": "almost done",
+    "of": "{{done}} of {{total}}"
+  }
+}

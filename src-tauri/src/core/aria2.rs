@@ -66,7 +66,9 @@ impl Aria2Daemon {
             format!("--save-session={}", session_file.to_string_lossy()),
             format!("--input-file={}", session_file.to_string_lossy()),
             "--enable-dht=true".into(),
-            "--listen-port=0".into(),
+            // NOTE: do NOT pass --listen-port=0 — aria2 requires 1024..65535
+            // and would exit immediately (the "0 reactions" bug). The default
+            // 6881-6999 range is fine: aria2 skips busy ports itself.
             "--quiet=true".into(),
         ];
 
@@ -98,7 +100,28 @@ impl Aria2Daemon {
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        Err(Aria2Error::Rpc("daemon did not answer RPC in time".into()))
+        // The daemon is dead or deaf — surface its stderr tail so the
+        // user (and we) see WHY instead of a bare timeout.
+        let mut guard = daemon.child.lock().await;
+        let exited = guard.try_wait().ok().flatten().is_some();
+        let mut stderr_tail: Option<String> = None;
+        if exited {
+            if let Some(mut s) = guard.stderr.take() {
+                use tokio::io::AsyncReadExt as _;
+                let mut buf = Vec::new();
+                let _ = s.read_to_end(&mut buf).await;
+                let text = String::from_utf8_lossy(&buf).to_string();
+                let tail: String = text.chars().rev().take(400).collect();
+                let tail = tail.chars().rev().collect::<String>();
+                if !tail.trim().is_empty() {
+                    stderr_tail = Some(tail);
+                }
+            }
+        }
+        guard.start_kill();
+        let detail = stderr_tail.unwrap_or_else(|| "RPC did not answer in 2s".to_string());
+        log::error!("aria2 daemon failed to start: {detail}");
+        Err(Aria2Error::Rpc(detail))
     }
 
     async fn rpc(

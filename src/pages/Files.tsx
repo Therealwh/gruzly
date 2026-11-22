@@ -57,7 +57,8 @@ export function Files() {
         if (e instanceof CommandError && e.code === "browserMode") {
           toast.warning(t("errors.generic"));
         } else {
-          toast.error(t("errors.generic"));
+          const detail = e instanceof Error ? e.message.slice(0, 140) : "";
+          toast.error(detail ? `${t("errors.generic")}: ${detail}` : t("errors.generic"));
         }
         return false;
       }

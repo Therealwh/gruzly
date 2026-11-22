@@ -3,6 +3,15 @@
 All notable changes to Gruzly are documented here. Format: Keep a Changelog,
 versioning: SemVer.
 
+## [0.1.2] — 2026-11-22
+
+### Fixed
+- Critical: file/torrent downloads did nothing — the aria2 daemon was spawned
+  with an invalid `--listen-port=0` and exited instantly, so the RPC never came
+  up ("0 reactions" on paste/torrent). The flag is dropped; the daemon now
+  reports its stderr tail if it ever fails to start.
+- Error toasts on failed adds now include the engine's message.
+
 ## [0.1.1] — 2026-11-22
 
 ### Fixed

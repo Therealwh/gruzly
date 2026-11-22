@@ -178,7 +178,7 @@ impl Gate {
     }
 
     /// Blocks until a slot is granted to this token (lowest rank first).
-    async fn acquire(&self, token: u64, rank: usize) {
+    async fn acquire(&self, token: u64, _rank: usize) {
         loop {
             let granted = {
                 let slots = self.slots.lock().await;

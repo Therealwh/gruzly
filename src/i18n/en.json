@@ -349,7 +349,11 @@
       "proxy": "Use proxy",
       "proxyHost": "Host",
       "proxyPort": "Port",
-      "proxyType": "Type"
+      "proxyType": "Type",
+      "cookiesFile": "Cookies file (cookies.txt)",
+      "cookiesFileHint": "Most reliable on Windows — export with a 'Get cookies.txt LOCALLY' browser extension",
+      "cookiesFilePlaceholder": "C:\\cookies\\youtube.txt",
+      "cookiesFilePick": "Choose file…"
     },
     "hotkeys": {
       "title": "Hotkeys",
@@ -438,7 +442,8 @@
     "rpcFailed": "Download engine is not responding. Restarting it usually helps.",
     "torrentActive": "This torrent is already downloading — find it in the queue",
     "torrentComplete": "This torrent has already been downloaded",
-    "ytdlpCookies": "The site asks to sign in. Enable browser cookies in Settings → Integrations and try again."
+    "ytdlpCookies": "The site asks to sign in. Enable browser cookies in Settings → Integrations and try again.",
+    "cookiesChromeBusy": "Chrome keeps its cookie database locked — fully close Chrome, or use a cookies.txt file in Settings → Integrations"
   },
   "format": {
     "perSecond": "{{value}}/s",

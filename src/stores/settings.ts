@@ -13,6 +13,7 @@ export type Settings = {
   seedRatio: string;
   cookiesEnabled: boolean;
   cookiesBrowser: string;
+  cookiesFile: string;
   sponsorblock: boolean;
   proxyEnabled: boolean;
   proxyType: "HTTP" | "SOCKS5";
@@ -39,6 +40,7 @@ const DEFAULTS: Settings = {
   seedRatio: "0",
   cookiesEnabled: false,
   cookiesBrowser: "Chrome",
+  cookiesFile: "",
   sponsorblock: false,
   proxyEnabled: false,
   proxyType: "HTTP",

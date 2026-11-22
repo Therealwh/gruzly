@@ -30,6 +30,21 @@ versioning: SemVer.
   --auto-file-renaming=false (known aria2 behavior, issue #1542).
 - Non-JSON engine output streams into the task row as live activity.
 
+## [0.2.1] — 2026-11-23
+
+### Fixed
+- HLS downloads (YouTube dubbed tracks, m3u8-only sources) showed "0 KB"
+  with a frozen bar: the native HLS downloader emits no progress events
+  when piped. m3u8 downloads are now routed to FFmpeg, whose time=
+  output is parsed against the video duration into a real progress bar.
+  Verified against a live m3u8 download (70 progress lines, 144p/360p).
+- Cookie files: cookies.txt support added (Settings → Integrations) and
+  Chrome-database errors now explain the fix. A cookies.txt file takes
+  priority over --cookies-from-browser.
+
+### Added
+- Cookies validation (existing .txt file) with tests.
+
 ## [0.1.8] — 2026-11-22
 
 ### Fixed

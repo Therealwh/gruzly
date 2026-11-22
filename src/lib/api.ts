@@ -86,6 +86,8 @@ export type VideoDownloadSpec = {
   embedSubtitles: boolean;
   sponsorblock: boolean;
   cookiesBrowser: string | null;
+  cookiesFile: string | null;
+  duration: number | null;
   limitRate: string | null;
   proxy: string | null;
 };

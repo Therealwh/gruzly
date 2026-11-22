@@ -463,20 +463,56 @@ function IntegrationsSection() {
           />
         </Row>
         {settings.cookiesEnabled && (
-          <Row label={t("settings.integrations.cookiesBrowser")} stacked>
-            <select
-              value={settings.cookiesBrowser}
-              onChange={(e) => settings.update({ cookiesBrowser: e.target.value })}
-              className="h-9 w-full rounded-lg border border-border bg-surface-2 px-2.5 text-xs text-text focus:border-accent focus:outline-none"
-              aria-label={t("settings.integrations.cookiesBrowser")}
+          <>
+            <Row label={t("settings.integrations.cookiesBrowser")} stacked>
+              <select
+                value={settings.cookiesBrowser}
+                onChange={(e) => settings.update({ cookiesBrowser: e.target.value })}
+                className="h-9 w-full rounded-lg border border-border bg-surface-2 px-2.5 text-xs text-text focus:border-accent focus:outline-none"
+                aria-label={t("settings.integrations.cookiesBrowser")}
+              >
+                {BROWSERS.map((b) => (
+                  <option key={b} value={b}>
+                    {b}
+                  </option>
+                ))}
+              </select>
+            </Row>
+            <Row
+              label={t("settings.integrations.cookiesFile")}
+              hint={t("settings.integrations.cookiesFileHint")}
+              stacked
             >
-              {BROWSERS.map((b) => (
-                <option key={b} value={b}>
-                  {b}
-                </option>
-              ))}
-            </select>
-          </Row>
+              <div className="flex items-center gap-2">
+                <Input
+                  value={settings.cookiesFile}
+                  onChange={(e) => settings.update({ cookiesFile: e.target.value })}
+                  placeholder={t("settings.integrations.cookiesFilePlaceholder")}
+                  className="flex-1"
+                  aria-label={t("settings.integrations.cookiesFile")}
+                />
+                <Button
+                  variant="secondary"
+                  onClick={async () => {
+                    try {
+                      const picked = await openDialog({
+                        multiple: false,
+                        filters: [{ name: "cookies.txt", extensions: ["txt"] }],
+                      });
+                      if (typeof picked === "string") {
+                        settings.update({ cookiesFile: picked, cookiesBrowser: "" });
+                        toast.success(t("toasts.settingsSaved"));
+                      }
+                    } catch {
+                      toast.error(t("errors.generic"));
+                    }
+                  }}
+                >
+                  {t("settings.integrations.cookiesFilePick")}
+                </Button>
+              </div>
+            </Row>
+          </>
         )}
         <Row label={t("settings.integrations.sponsorblock")} hint={t("settings.integrations.sponsorblockHint")}>
           <Switch

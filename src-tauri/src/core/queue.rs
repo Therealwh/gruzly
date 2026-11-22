@@ -627,15 +627,38 @@ async fn run_video_job(
 
     // Drain stderr in the background: surface the last line as live
     // activity in the UI (throttled) and keep a tail for error reports.
+    // ffmpeg progress lines ("time=…") are parsed into progress events so
+    // m3u8 downloads get a real bar.
     let stderr_tail: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let stderr_tail_reader = stderr_tail.clone();
     let activity_job = job.id.clone();
     let activity_app = app.clone();
+    let duration = job
+        .spec
+        .as_ref()
+        .and_then(|s| s.duration)
+        .filter(|d| *d > 0.0);
     tokio::spawn(async move {
         let mut lines = BufReader::new(stderr).lines();
         let mut last_emit = Instant::now() - EMIT_INTERVAL;
         let mut last_line = String::new();
         while let Ok(Some(line)) = lines.next_line().await {
+            if let Some(t) = ytdlp::ffmpeg_time_seconds(&line) {
+                if let Some(d) = duration {
+                    let t = t.min(d);
+                    let _ = activity_app.emit(
+                        EVENT_PROGRESS,
+                        ProgressEvent {
+                            id: activity_job.clone(),
+                            downloaded_bytes: t,
+                            total_bytes: Some(d),
+                            speed: 0.0,
+                            eta: d - t,
+                        },
+                    );
+                    continue;
+                }
+            }
             let is_noise = line.starts_with('{') || line.trim().is_empty();
             if !is_noise && last_emit.elapsed() >= EMIT_INTERVAL {
                 last_emit = Instant::now();

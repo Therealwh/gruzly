@@ -355,7 +355,11 @@
       "proxy": "Использовать прокси",
       "proxyHost": "Хост",
       "proxyPort": "Порт",
-      "proxyType": "Тип"
+      "proxyType": "Тип",
+      "cookiesFile": "Файл cookies (cookies.txt)",
+      "cookiesFileHint": "Самый надёжный способ на Windows — экспорт расширением «Get cookies.txt LOCALLY»",
+      "cookiesFilePlaceholder": "C:\\cookies\\youtube.txt",
+      "cookiesFilePick": "Выбрать файл…"
     },
     "hotkeys": {
       "title": "Горячие клавиши",
@@ -444,7 +448,8 @@
     "rpcFailed": "Движок загрузок не отвечает. Обычно помогает его перезапуск.",
     "torrentActive": "Этот торрент уже скачивается — он в очереди",
     "torrentComplete": "Этот торрент уже скачан",
-    "ytdlpCookies": "Сайт требует вход. Включите cookies браузера в Настройки → Интеграции и попробуйте снова."
+    "ytdlpCookies": "Сайт требует вход. Включите cookies браузера в Настройки → Интеграции и попробуйте снова.",
+    "cookiesChromeBusy": "Chrome держит базу cookies закрытой — полностью закройте Chrome или выберите файл cookies.txt в Настройках → Интеграции"
   },
   "format": {
     "perSecond": "{{value}}/с",

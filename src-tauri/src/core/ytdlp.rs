@@ -229,6 +229,49 @@ pub fn validate_magnet(magnet: &str) -> Result<(), YtdlpError> {
     }
 }
 
+/// Cookie file must be an existing .txt path without leading dash.
+pub fn validate_cookies_file(path: &str) -> Result<(), YtdlpError> {
+    let p = PathBuf::from(path);
+    let ok = !path.trim_start_matches('-').ne(path)
+        && p.is_file()
+        && p.extension()
+            .map(|e| e.eq_ignore_ascii_case("txt"))
+            .unwrap_or(false);
+    if ok {
+        Ok(())
+    } else {
+        Err(YtdlpError::Engine("invalid cookies file".into()))
+    }
+}
+
+/// Parses ffmpeg's `time=HH:MM:SS.xx` (from a progress line) into seconds.
+pub fn ffmpeg_time_seconds(line: &str) -> Option<f64> {
+    let idx = line.find("time=")?;
+    let rest = &line[idx + 5..];
+    let end = rest
+        .find(|c: char| !(c.is_ascii_digit() || c == ':' || c == '.'))
+        .unwrap_or(rest.len());
+    let stamp = &rest[..end];
+    if stamp.is_empty() {
+        return None;
+    }
+    let parts: Vec<f64> = stamp
+        .split(':')
+        .filter_map(|p| p.parse::<f64>().ok())
+        .collect();
+    let seconds: f64 = parts
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(i, v)| v * 60f64.powi(i as i32))
+        .sum();
+    if seconds > 0.0 {
+        Some(seconds)
+    } else {
+        None
+    }
+}
+
 /// Only known browsers for --cookies-from-browser (IPC values are untrusted).
 pub fn validate_cookies_browser(browser: &str) -> Result<(), YtdlpError> {
     if COOKIE_BROWSERS.contains(&browser.to_lowercase().as_str()) {
@@ -446,6 +489,12 @@ pub struct VideoDownloadSpec {
     pub embed_subtitles: bool,
     pub sponsorblock: bool,
     pub cookies_browser: Option<String>,
+    /// Path to an exported cookies.txt (reliable on Windows with Chrome 127+).
+    #[serde(default)]
+    pub cookies_file: Option<String>,
+    /// Video duration in seconds (for HLS progress via ffmpeg time=).
+    #[serde(default)]
+    pub duration: Option<f64>,
     /// e.g. "5M" — yt-dlp --limit-rate
     #[serde(default)]
     pub limit_rate: Option<String>,
@@ -491,6 +540,9 @@ pub fn download_args(
     if let Some(browser) = &spec.cookies_browser {
         validate_cookies_browser(browser)?;
     }
+    if let Some(file) = &spec.cookies_file {
+        validate_cookies_file(file)?;
+    }
     let template = match &spec.output_template {
         Some(t) => Some(sanitize_output_template(t)?),
         None => None,
@@ -500,6 +552,11 @@ pub fn download_args(
         "--newline".into(),
         "--no-warnings".into(),
         "--no-mtime".into(),
+        // Native HLS/DASH downloaders emit no progress events when piped;
+        // ffmpeg does (stderr "time=HH:MM:SS.xx"), which the queue parses
+        // into a real progress bar.
+        "--downloader".into(),
+        "m3u8:ffmpeg".into(),
         "--progress-template".into(),
         "download:%(progress)j".into(),
         // Keep readable unicode filenames; yt-dlp sanitizes illegal chars
@@ -547,7 +604,14 @@ pub fn download_args(
         args.push("sponsor".into());
     }
 
-    if let Some(browser) = &spec.cookies_browser {
+    if let Some(file) = &spec.cookies_file {
+        // Exported cookies.txt is the most reliable source on Windows
+        // (Chrome 127+ encrypts its database with App-Bound Encryption).
+        if !file.trim().is_empty() {
+            args.push("--cookies".into());
+            args.push(file.clone());
+        }
+    } else if let Some(browser) = &spec.cookies_browser {
         if !browser.is_empty() {
             args.push("--cookies-from-browser".into());
             args.push(browser.clone());
@@ -752,6 +816,18 @@ mod tests {
         .unwrap();
         assert_eq!(p.fragment_index, Some(3));
         assert_eq!(p.fragment_count, Some(40));
+    }
+
+    #[test]
+    fn parses_ffmpeg_time_stamps() {
+        assert_eq!(
+            ffmpeg_time_seconds("frame= 125 size= 0KiB time=00:00:08.49 x"),
+            Some(8.49)
+        );
+        assert_eq!(ffmpeg_time_seconds("time=01:02:03.00"), Some(3723.0));
+        assert_eq!(ffmpeg_time_seconds("time=12.34"), Some(12.34));
+        assert_eq!(ffmpeg_time_seconds("no time here"), None);
+        assert_eq!(ffmpeg_time_seconds("time=00:00:00.00"), None);
     }
 
     #[test]

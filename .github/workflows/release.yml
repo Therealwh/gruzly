@@ -55,6 +55,13 @@ jobs:
       - name: Fetch sidecar engines
         run: npm run engines:fetch
       - run: npm ci
+      - name: Ensure release exists (avoids create-race between OS jobs)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||             gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY"               --title "Gruzly ${{ github.ref_name }}"               --notes "Download only content you own or have permission to save."
       - name: Build, sign & publish release
         uses: tauri-apps/tauri-action@v0
         env:

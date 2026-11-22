@@ -1,9 +1,10 @@
-import { ExternalLink, Info } from "lucide-react";
+import { ExternalLink, Info, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Badge } from "@/components/ui";
+import { Badge, Button } from "@/components/ui";
 import { BrandMark } from "@/components/layout/Sidebar";
 import { getAppInfo, type AppInfo } from "@/lib/api";
+import { useUpdateStore } from "@/stores/update";
 
 const ENGINES = [
   { id: "yt-dlp", license: "Unlicense", url: "https://github.com/yt-dlp/yt-dlp" },
@@ -14,6 +15,7 @@ const ENGINES = [
 export function About() {
   const { t } = useTranslation();
   const [info, setInfo] = useState<AppInfo | null>(null);
+  const { status, version, checkNow } = useUpdateStore();
 
   useEffect(() => {
     void getAppInfo()
@@ -36,6 +38,20 @@ export function About() {
             {info.os} · {info.arch}
           </span>
         </p>
+      )}
+
+      <Button
+        size="md"
+        variant="secondary"
+        className="mt-4"
+        disabled={status === "checking"}
+        onClick={() => void checkNow()}
+      >
+        <RefreshCw className={status === "checking" ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} aria-hidden />
+        {status === "checking" ? t("about.checkingUpdate") : t("about.checkUpdates")}
+      </Button>
+      {status === "available" && version && (
+        <p className="mt-2 text-2xs text-accent-text">{t("update.available", { version })}</p>
       )}
 
       <section className="mt-8 w-full rounded-2xl border border-warning/25 bg-warning/5 p-4 text-left shadow-panel">

@@ -18,3 +18,5 @@ src-tauri/binaries/
 Thumbs.db
 .idea/
 .vscode/
+.tauri/
+portable/

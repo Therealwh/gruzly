@@ -377,7 +377,9 @@
     "enginesHint": "Gruzly is a shell around these wonderful tools:",
     "license": "Gruzly is released under the MIT license.",
     "repo": "Source code",
-    "checkUpdates": "Check for updates"
+    "checkUpdates": "Check for updates",
+    "checkingUpdate": "Checking for updates…",
+    "upToDate": "You're on the latest version"
   },
   "palette": {
     "placeholder": "Type a command…",
@@ -438,5 +440,11 @@
     "eta": "{{value}} left",
     "etaDone": "almost done",
     "of": "{{done}} of {{total}}"
+  },
+  "update": {
+    "available": "Version {{version}} is available",
+    "install": "Update and restart",
+    "downloading": "Downloading update…",
+    "failed": "Update check failed. Try again later."
   }
 }

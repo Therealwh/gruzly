@@ -44,13 +44,15 @@ jobs:
   build:
     name: Build (${{ matrix.os }})
     needs: quality
+    permissions:
+      contents: write # tauri-action creates releases on tags (updater channel)
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            bundle_args: "--bundles nsis"
+            bundle_args: "--bundles nsis,msi"
           - os: macos-latest
             target: aarch64-apple-darwin
             bundle_args: "--bundles app"
@@ -77,15 +79,28 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libudev-dev
       - name: Fetch sidecar engines
         run: npm run engines:fetch
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: npm ci
-      - name: Build app
+      - name: Build bundles
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           args: ${{ matrix.bundle_args }}
+      - name: Sign & publish release with updater artifacts (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          args: ${{ matrix.bundle_args }}
+          includeUpdaterArtifacts: true
+          tagName: ${{ github.ref_name }}
+          releaseName: "Gruzly ${{ github.ref_name }}"
+          releaseBody: "Download only content you own or have permission to save. Gruzly does not support or circumvent DRM."
+          releaseDraft: false
+          prerelease: false
       - name: Assemble portable (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -95,7 +110,14 @@ jobs:
           Copy-Item src-tauri/target/x86_64-pc-windows-msvc/release/gruzly.exe $out/
           Copy-Item src-tauri/target/x86_64-pc-windows-msvc/release/*.exe $out/ -Exclude gruzly.exe
           Compress-Archive -Path $out/* -DestinationPath portable/Gruzly-portable-win64.zip -Force
-      - name: Upload artifacts
+      - name: Upload portable to release (tags only)
+        if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload $env:GITHUB_REF_NAME portable/Gruzly-portable-win64.zip --clobber
+      - name: Upload artifacts (non-tag builds)
+        if: "!startsWith(github.ref, 'refs/tags/v')"
         uses: actions/upload-artifact@v4
         with:
           name: gruzly-${{ matrix.os }}
@@ -105,22 +127,4 @@ jobs:
             src-tauri/target/*/release/bundle/**/*.dmg
             src-tauri/target/*/release/bundle/**/*.deb
             src-tauri/target/*/release/bundle/**/*.AppImage
-            portable/*.zip
           if-no-files-found: warn
-
-  release:
-    name: Release
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          merge-multiple: true
-          path: release-assets
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: release-assets/**
-          generate_release_notes: true

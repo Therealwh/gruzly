@@ -42,6 +42,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis", "msi"],
+    "createUpdaterArtifacts": true,
     "externalBin": [
       "binaries/yt-dlp",
       "binaries/aria2c",
@@ -60,5 +61,12 @@
       }
     }
   },
-  "plugins": {}
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/Therealwh/gruzly/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDIyOTA2RUI0REJCNTE2RTcKUldUbkZyWGJ0RzZRSXZnWVdPaFJkMHhoM0tQSXRqcW9VaHhBUnhvWmhuWTFsMTRLOUhLbUtucXcK"
+    }
+  }
 }

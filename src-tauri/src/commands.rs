@@ -3,9 +3,11 @@
 use serde::Serialize;
 use tauri::State;
 
+use crate::core::db::HistoryRecord;
 use crate::core::engines::{self, EngineInfo};
-use crate::core::queue::{self, JobView, QueueManager};
+use crate::core::queue::{self, JobView, QueueManager, TorrentReadyEvent, TorrentSource};
 use crate::core::ytdlp::{self, Analysis, VideoDownloadSpec};
+use crate::AppState;
 
 #[derive(Serialize)]
 pub struct AppInfo {
@@ -74,8 +76,58 @@ pub async fn start_video_download(
 }
 
 #[tauri::command]
-pub async fn pause_job(queue: State<'_, QueueManager>, id: String) -> CmdResult<()> {
-    queue::pause_job(queue, id)
+pub async fn start_file_download(
+    app: tauri::AppHandle,
+    queue: State<'_, QueueManager>,
+    url: String,
+    title: Option<String>,
+) -> CmdResult<String> {
+    queue::start_file(app, queue, url, title)
+        .await
+        .map_err(|e| CommandError::of("downloadStart", e))
+}
+
+#[tauri::command]
+pub async fn start_torrent(
+    app: tauri::AppHandle,
+    queue: State<'_, QueueManager>,
+    source: TorrentSource,
+) -> CmdResult<String> {
+    queue::start_torrent(app, queue, source)
+        .await
+        .map_err(|e| CommandError::of("downloadStart", e))
+}
+
+#[tauri::command]
+pub async fn torrent_files(
+    app: tauri::AppHandle,
+    queue: State<'_, QueueManager>,
+    job_id: String,
+) -> CmdResult<TorrentReadyEvent> {
+    queue::torrent_files(app, queue, job_id)
+        .await
+        .map_err(|e| CommandError::of("jobOp", e))
+}
+
+#[tauri::command]
+pub async fn select_torrent_files(
+    app: tauri::AppHandle,
+    queue: State<'_, QueueManager>,
+    job_id: String,
+    indices: Vec<u64>,
+) -> CmdResult<()> {
+    queue::select_torrent_files(app, queue, job_id, indices)
+        .await
+        .map_err(|e| CommandError::of("jobOp", e))
+}
+
+#[tauri::command]
+pub async fn pause_job(
+    app: tauri::AppHandle,
+    queue: State<'_, QueueManager>,
+    id: String,
+) -> CmdResult<()> {
+    queue::pause_job(app, queue, id)
         .await
         .map_err(|e| CommandError::of("jobOp", e))
 }
@@ -108,6 +160,36 @@ pub async fn remove_job(queue: State<'_, QueueManager>, id: String) -> CmdResult
 #[tauri::command]
 pub async fn list_jobs(queue: State<'_, QueueManager>) -> CmdResult<Vec<JobView>> {
     Ok(queue::list_jobs(queue).await)
+}
+
+#[tauri::command]
+pub async fn list_history(
+    state: State<'_, AppState>,
+    query: Option<String>,
+    kind: Option<String>,
+    since_ms: Option<i64>,
+) -> CmdResult<Vec<HistoryRecord>> {
+    let db = state.db.clone();
+    let query = query.unwrap_or_default();
+    let kind = kind.unwrap_or_else(|| "all".into());
+    tokio::task::spawn_blocking(move || {
+        db.list_history(&query, &kind, since_ms, 1000)
+            .map_err(|e| CommandError::of("db", e.to_string()))
+    })
+    .await
+    .map_err(|e| CommandError::of("db", e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn clear_history(state: State<'_, AppState>) -> CmdResult<u32> {
+    let db = state.db.clone();
+    tokio::task::spawn_blocking(move || {
+        db.clear_history()
+            .map(|n| n as u32)
+            .map_err(|e| CommandError::of("db", e.to_string()))
+    })
+    .await
+    .map_err(|e| CommandError::of("db", e.to_string()))?
 }
 
 #[tauri::command]

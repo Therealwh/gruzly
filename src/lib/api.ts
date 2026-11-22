@@ -133,6 +133,45 @@ export async function startVideoDownload(
   return call<string>("start_video_download", { spec, title });
 }
 
+export async function startFileDownload(
+  url: string,
+  title?: string,
+): Promise<string> {
+  return call<string>("start_file_download", { url, title: title ?? null });
+}
+
+export type TorrentSource =
+  | { magnet: string }
+  | { torrentBase64: string };
+
+export async function startTorrent(source: TorrentSource): Promise<string> {
+  return call<string>("start_torrent", { source });
+}
+
+export type TorrentFileInfo = {
+  index: number;
+  path: string;
+  length: number;
+  selected: boolean;
+};
+
+export type TorrentReadyEvent = {
+  jobId: string;
+  name: string;
+  files: TorrentFileInfo[];
+};
+
+export async function torrentFiles(jobId: string): Promise<TorrentReadyEvent> {
+  return call<TorrentReadyEvent>("torrent_files", { jobId });
+}
+
+export async function selectTorrentFiles(
+  jobId: string,
+  indices: number[],
+): Promise<void> {
+  return call<void>("select_torrent_files", { jobId, indices });
+}
+
 export async function pauseJob(id: string): Promise<void> {
   return call<void>("pause_job", { id });
 }
@@ -155,6 +194,40 @@ export async function listJobs(): Promise<JobView[]> {
 
 export async function updateYtdlp(): Promise<string> {
   return call<string>("update_ytdlp");
+}
+
+// ---- history ----
+
+export type HistoryRecord = {
+  id: string;
+  kind: "video" | "file" | "torrent";
+  engine: string;
+  url: string;
+  title: string;
+  folder: string | null;
+  filename: string | null;
+  status: string;
+  totalBytes: number | null;
+  createdAt: number;
+  finishedAt: number;
+};
+
+export type HistoryFilter = {
+  query?: string;
+  kind?: "all" | "video" | "file" | "torrent";
+  sinceMs?: number | null;
+};
+
+export async function listHistory(filter: HistoryFilter = {}): Promise<HistoryRecord[]> {
+  return call<HistoryRecord[]>("list_history", {
+    query: filter.query ?? null,
+    kind: filter.kind ?? "all",
+    sinceMs: filter.sinceMs ?? null,
+  });
+}
+
+export async function clearHistory(): Promise<number> {
+  return call<number>("clear_history");
 }
 
 // ---- events ----

@@ -14,11 +14,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
+use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::{Mutex, Notify, Semaphore};
 
+use super::aria2::Aria2Daemon;
+use super::db::HistoryRecord;
 use super::engines;
 use super::ytdlp::{self, VideoDownloadSpec, YtdlpProgress};
 
@@ -107,14 +110,12 @@ struct Job {
     status: Mutex<(JobStatus, Option<String>)>, // status + error
     progress: Mutex<Progress>,
     spec: Option<VideoDownloadSpec>,
+    /// aria2 gid for file/torrent jobs; None for video jobs.
+    gid: Mutex<Option<String>>,
     kill: Arc<Notify>,
     pause_requested: AtomicBool,
     cancel_requested: AtomicBool,
     created_at: i64,
-}
-
-impl Job {
-    // (helpers land with M2 aria2 jobs)
 }
 
 fn make_id() -> String {
@@ -297,6 +298,7 @@ pub async fn start_video(
         status: Mutex::new((JobStatus::Queued, None)),
         progress: Mutex::new(Progress::default()),
         spec: Some(spec),
+        gid: Mutex::new(None),
         kill: Arc::new(Notify::new()),
         pause_requested: AtomicBool::new(false),
         cancel_requested: AtomicBool::new(false),
@@ -316,8 +318,13 @@ pub async fn start_video(
     Ok(id)
 }
 
-/// Signals pause; the runner kills the child and marks the job paused.
-pub async fn pause_job(queue: State<'_, QueueManager>, id: String) -> Result<(), String> {
+/// Signals pause. Video jobs: the runner kills the child and marks the
+/// job paused. aria2 jobs go through the daemon instead.
+pub async fn pause_job(
+    app: AppHandle,
+    queue: State<'_, QueueManager>,
+    id: String,
+) -> Result<(), String> {
     let job = queue
         .jobs
         .lock()
@@ -325,6 +332,12 @@ pub async fn pause_job(queue: State<'_, QueueManager>, id: String) -> Result<(),
         .get(&id)
         .cloned()
         .ok_or("no such job")?;
+    if job.engine == "aria2" {
+        let gid = job.gid.lock().await.clone().ok_or("job has no gid yet")?;
+        let daemon = ensure_aria2(&app).await?;
+        daemon.pause(&gid).await.map_err(|e| e.to_string())?;
+        return Ok(());
+    }
     job.pause_requested.store(true, Ordering::SeqCst);
     job.kill.notify_waiters();
     Ok(())
@@ -342,6 +355,14 @@ pub async fn resume_job(
         .get(&id)
         .cloned()
         .ok_or("no such job")?;
+
+    if job.engine == "aria2" {
+        let gid = job.gid.lock().await.clone().ok_or("job has no gid yet")?;
+        let daemon = ensure_aria2(&app).await?;
+        daemon.unpause(&gid).await.map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
     let spec = job.spec.clone().ok_or("job cannot be resumed")?;
     let binary =
         engines::find_engine(&app, "yt-dlp").ok_or_else(|| "yt-dlp not found".to_string())?;
@@ -517,6 +538,13 @@ async fn run_video_job(
                     eta: 0.0,
                 },
             );
+            record_history(
+                &app,
+                &job,
+                JobStatus::Completed,
+                progress.total.unwrap_or(progress.downloaded) as i64,
+            )
+            .await;
         }
         (Some(true), _) => {
             set_status(&app, &job, JobStatus::Paused, None).await;
@@ -532,6 +560,7 @@ async fn run_video_job(
                 tail.join("\n").chars().take(1500).collect()
             };
             set_status(&app, &job, JobStatus::Failed, Some(err)).await;
+            record_history(&app, &job, JobStatus::Failed, 0).await;
         }
         (None, None) => {
             set_status(
@@ -541,6 +570,7 @@ async fn run_video_job(
                 Some("engine stopped unexpectedly".into()),
             )
             .await;
+            record_history(&app, &job, JobStatus::Failed, 0).await;
         }
     }
 }
@@ -565,4 +595,416 @@ pub async fn update_ytdlp(app: AppHandle) -> Result<String, String> {
     }
     let _ = app.emit("engine://updated", "yt-dlp");
     Ok(text.lines().last().unwrap_or("updated").to_string())
+}
+
+// ---------------------------------------------------------------------------
+// aria2 jobs (files & torrents) — one shared daemon, one poller per gid
+// ---------------------------------------------------------------------------
+
+pub const EVENT_TORRENT_READY: &str = "torrent://ready";
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TorrentSource {
+    Magnet(String),
+    TorrentBase64(String),
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TorrentReadyEvent {
+    pub job_id: String,
+    pub name: String,
+    pub files: Vec<TorrentFileInfo>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TorrentFileInfo {
+    pub index: u64,
+    pub path: String,
+    pub length: u64,
+    pub selected: bool,
+}
+
+/// Returns the shared aria2 daemon, spawning it on first use.
+async fn ensure_aria2(app: &AppHandle) -> Result<Arc<Aria2Daemon>, String> {
+    {
+        let state: State<'_, crate::AppState> = app.state();
+        let guard = state.aria2.lock().await;
+        if let Some(daemon) = guard.as_ref() {
+            return Ok(daemon.clone());
+        }
+    }
+    let binary = engines::find_engine(app, "aria2").ok_or("aria2 not found")?;
+    let dir = app.path().download_dir().map_err(|e| e.to_string())?;
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let session = data_dir.join("aria2.session");
+    let daemon = Aria2Daemon::spawn(&binary, dir, session)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let state: State<'_, crate::AppState> = app.state();
+    *state.aria2.lock().await = Some(daemon.clone());
+    Ok(daemon)
+}
+
+fn default_title_for_url(url: &str) -> String {
+    url.rsplit('/')
+        .next()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(url)
+        .split('?')
+        .next()
+        .unwrap_or(url)
+        .to_string()
+}
+
+fn register_job(queue: &QueueManager, job: Arc<Job>) {
+    let id = job.id.clone();
+    if let Ok(mut jobs) = queue.jobs.try_lock() {
+        jobs.insert(id.clone(), job.clone());
+    }
+    if let Ok(mut order) = queue.order.try_lock() {
+        order.push(id);
+    }
+}
+
+fn base_job(url: String, title: String, folder: Option<String>) -> Job {
+    Job {
+        id: make_id(),
+        kind: JobKind::File, // caller narrows before sharing
+        engine: "aria2".into(),
+        url,
+        title,
+        folder,
+        status: Mutex::new((JobStatus::Queued, None)),
+        progress: Mutex::new(Progress::default()),
+        spec: None,
+        gid: Mutex::new(None),
+        kill: Arc::new(Notify::new()),
+        pause_requested: AtomicBool::new(false),
+        cancel_requested: AtomicBool::new(false),
+        created_at: now_ms(),
+    }
+}
+
+/// Starts a direct HTTP/FTP download through aria2.
+pub async fn start_file(
+    app: AppHandle,
+    queue: State<'_, QueueManager>,
+    url: String,
+    title: Option<String>,
+) -> Result<String, String> {
+    let daemon = ensure_aria2(&app).await?;
+    let gid = daemon
+        .add_uri(&[url.clone()], json!({}), false)
+        .await
+        .map_err(|e| e.to_string())?;
+    if gid.is_empty() {
+        return Err("aria2 refused the URI".into());
+    }
+
+    let mut job = Arc::new(base_job(
+        url.clone(),
+        title.unwrap_or_else(|| default_title_for_url(&url)),
+        Some(daemon.download_dir.to_string_lossy().to_string()),
+    ));
+    if let Some(j) = Arc::get_mut(&mut job) {
+        j.kind = JobKind::File;
+    }
+
+    emit_state(
+        &app,
+        &job.id,
+        JobStatus::Queued,
+        Some(job.title.clone()),
+        None,
+    );
+    register_job(&queue, job.clone());
+
+    let job_task = job.clone();
+    tokio::spawn(async move {
+        let queue: State<'_, QueueManager> = app.state();
+        run_aria2_job(app.clone(), &queue, job_task, daemon, gid).await;
+    });
+    Ok(job.id.clone())
+}
+
+/// Starts a magnet or .torrent download. Files stay unselected (paused)
+/// until the UI confirms the file selection.
+pub async fn start_torrent(
+    app: AppHandle,
+    queue: State<'_, QueueManager>,
+    source: TorrentSource,
+) -> Result<String, String> {
+    let daemon = ensure_aria2(&app).await?;
+
+    let (gid, url) = match &source {
+        TorrentSource::Magnet(magnet) => (
+            daemon
+                .add_uri(&[magnet.clone()], json!({}), true)
+                .await
+                .map_err(|e| e.to_string())?,
+            magnet.clone(),
+        ),
+        TorrentSource::TorrentBase64(b64) => (
+            daemon
+                .add_torrent(b64, json!({}), true)
+                .await
+                .map_err(|e| e.to_string())?,
+            "torrent".into(),
+        ),
+    };
+    if gid.is_empty() {
+        return Err("aria2 refused the torrent".into());
+    }
+
+    let mut job = Arc::new(base_job(
+        url,
+        match &source {
+            TorrentSource::Magnet(_) => "Magnet link".into(),
+            TorrentSource::TorrentBase64(_) => "Torrent".into(),
+        },
+        Some(daemon.download_dir.to_string_lossy().to_string()),
+    ));
+    if let Some(j) = Arc::get_mut(&mut job) {
+        j.kind = JobKind::Torrent;
+    }
+
+    emit_state(
+        &app,
+        &job.id,
+        JobStatus::Queued,
+        Some(job.title.clone()),
+        None,
+    );
+    register_job(&queue, job.clone());
+
+    let job_task = job.clone();
+    tokio::spawn(async move {
+        let queue: State<'_, QueueManager> = app.state();
+        run_aria2_job(app.clone(), &queue, job_task, daemon, gid).await;
+    });
+    Ok(job.id.clone())
+}
+
+/// Polls aria2 for one job until it reaches a terminal state.
+async fn run_aria2_job(
+    app: AppHandle,
+    queue: &QueueManager,
+    job: Arc<Job>,
+    daemon: Arc<Aria2Daemon>,
+    gid: String,
+) {
+    *job.gid.lock().await = Some(gid.clone());
+    let mut metadata_announced = false;
+    let mut last_emit: Option<Instant> = None;
+    let mut consecutive_errors = 0u32;
+
+    loop {
+        tokio::time::sleep(Duration::from_millis(800)).await;
+
+        // Local cancel signal (from the UI).
+        if job.cancel_requested.swap(false, Ordering::SeqCst) {
+            let _ = daemon.force_remove(&gid).await;
+            set_status(&app, &job, JobStatus::Canceled, None).await;
+            break;
+        }
+
+        let status = match daemon.tell_status(&gid).await {
+            Ok(s) => {
+                consecutive_errors = 0;
+                s
+            }
+            Err(e) => {
+                consecutive_errors += 1;
+                if consecutive_errors > 10 {
+                    set_status(&app, &job, JobStatus::Failed, Some(e.to_string())).await;
+                    break;
+                }
+                continue;
+            }
+        };
+
+        // Torrent metadata resolved → offer the file list to the UI once.
+        if job.kind == JobKind::Torrent
+            && !metadata_announced
+            && status.status != "error"
+            && !status.is_metadata_only()
+        {
+            metadata_announced = true;
+            let files: Vec<TorrentFileInfo> = status
+                .files
+                .iter()
+                .map(|f| TorrentFileInfo {
+                    index: f.index,
+                    path: f.path.clone(),
+                    length: f.length,
+                    selected: f.selected,
+                })
+                .collect();
+            let _ = app.emit(
+                EVENT_TORRENT_READY,
+                TorrentReadyEvent {
+                    job_id: job.id.clone(),
+                    name: status.torrent_name().unwrap_or_else(|| "Torrent".into()),
+                    files,
+                },
+            );
+        }
+
+        match status.status.as_str() {
+            "active" => {
+                {
+                    let mut s = job.status.lock().await;
+                    if s.0 != JobStatus::Downloading && s.0 != JobStatus::Merging {
+                        s.0 = JobStatus::Downloading;
+                    }
+                }
+                {
+                    let mut progress = job.progress.lock().await;
+                    progress.downloaded = status.completed() as f64;
+                    progress.total = Some(status.total() as f64);
+                    progress.speed = status.speed();
+                    progress.eta = status.eta();
+                    if let Some(f) = status.files.last() {
+                        progress.filename = Some(f.path.clone());
+                    }
+                    let throttled = last_emit
+                        .map(|t| t.elapsed() >= EMIT_INTERVAL)
+                        .unwrap_or(true);
+                    if throttled {
+                        last_emit = Some(Instant::now());
+                        let _ = app.emit(
+                            EVENT_PROGRESS,
+                            ProgressEvent {
+                                id: job.id.clone(),
+                                downloaded_bytes: progress.downloaded,
+                                total_bytes: progress.total,
+                                speed: progress.speed,
+                                eta: progress.eta,
+                            },
+                        );
+                    }
+                }
+            }
+            "paused" | "waiting" => {
+                let mut s = job.status.lock().await;
+                if s.0 != JobStatus::Queued && s.0 != JobStatus::Paused {
+                    s.0 = JobStatus::Paused;
+                }
+            }
+            "complete" => {
+                set_status(&app, &job, JobStatus::Completed, None).await;
+                record_history(&app, &job, JobStatus::Completed, status.total() as i64).await;
+                break;
+            }
+            "error" => {
+                let msg = status
+                    .error_message
+                    .clone()
+                    .unwrap_or_else(|| "aria2 reported an error".into());
+                set_status(&app, &job, JobStatus::Failed, Some(msg)).await;
+                record_history(&app, &job, JobStatus::Failed, status.completed() as i64).await;
+                break;
+            }
+            "removed" => {
+                set_status(&app, &job, JobStatus::Canceled, None).await;
+                break;
+            }
+            _ => {}
+        }
+    }
+    let _ = queue;
+}
+
+/// Persists a finished job to history (non-fatal on error).
+async fn record_history(app: &AppHandle, job: &Job, status: JobStatus, total_bytes: i64) {
+    let state: State<'_, crate::AppState> = app.state();
+    let view = job_view(job).await;
+    let rec = HistoryRecord {
+        id: view.id,
+        kind: match job.kind {
+            JobKind::Video => "video".to_string(),
+            JobKind::File => "file".to_string(),
+            JobKind::Torrent => "torrent".to_string(),
+        },
+        engine: job.engine.clone(),
+        url: job.url.clone(),
+        title: job.title.clone(),
+        folder: job.folder.clone(),
+        filename: view.filename,
+        status: match status {
+            JobStatus::Completed => "completed".to_string(),
+            JobStatus::Failed => "failed".to_string(),
+            JobStatus::Canceled => "canceled".to_string(),
+            _ => "unknown".to_string(),
+        },
+        total_bytes: Some(total_bytes),
+        created_at: job.created_at,
+        finished_at: now_ms(),
+    };
+    let db = state.db.clone();
+    let _ = tokio::task::spawn_blocking(move || db.insert_history(&rec)).await;
+}
+
+/// Files of a torrent job (for the selection modal).
+pub async fn torrent_files(
+    app: AppHandle,
+    queue: State<'_, QueueManager>,
+    job_id: String,
+) -> Result<TorrentReadyEvent, String> {
+    let job = queue
+        .jobs
+        .lock()
+        .await
+        .get(&job_id)
+        .cloned()
+        .ok_or("no such job")?;
+    let gid = job.gid.lock().await.clone().ok_or("job has no gid yet")?;
+    let daemon = ensure_aria2(&app).await?;
+    let status = daemon.tell_status(&gid).await.map_err(|e| e.to_string())?;
+    Ok(TorrentReadyEvent {
+        job_id: job.id.clone(),
+        name: status.torrent_name().unwrap_or_else(|| job.title.clone()),
+        files: status
+            .files
+            .iter()
+            .map(|f| TorrentFileInfo {
+                index: f.index,
+                path: f.path.clone(),
+                length: f.length,
+                selected: f.selected,
+            })
+            .collect(),
+    })
+}
+
+/// Confirms torrent file selection and starts the transfer.
+pub async fn select_torrent_files(
+    app: AppHandle,
+    queue: State<'_, QueueManager>,
+    job_id: String,
+    indices: Vec<u64>,
+) -> Result<(), String> {
+    let job = queue
+        .jobs
+        .lock()
+        .await
+        .get(&job_id)
+        .cloned()
+        .ok_or("no such job")?;
+    let gid = job.gid.lock().await.clone().ok_or("job has no gid yet")?;
+    let daemon = ensure_aria2(&app).await?;
+    if indices.is_empty() {
+        return Err("no files selected".into());
+    }
+    daemon
+        .select_files(&gid, &indices)
+        .await
+        .map_err(|e| e.to_string())?;
+    daemon.unpause(&gid).await.map_err(|e| e.to_string())?;
+    set_status(&app, &job, JobStatus::Queued, None).await;
+    Ok(())
 }

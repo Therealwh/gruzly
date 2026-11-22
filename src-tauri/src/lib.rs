@@ -8,10 +8,20 @@
 mod commands;
 mod core;
 
+use std::sync::Arc;
+
+use core::aria2::Aria2Daemon;
+use core::db::Db;
 use core::queue::QueueManager;
 use tauri::Manager;
 use tauri_plugin_log::Target;
 use tauri_plugin_log::TargetKind;
+
+/// Shared app state: the lazy aria2 daemon and the local database.
+pub struct AppState {
+    pub aria2: tokio::sync::Mutex<Option<Arc<Aria2Daemon>>>,
+    pub db: Arc<Db>,
+}
 
 /// Fire-and-forget yt-dlp self-update at startup: extractors break
 /// regularly, the app must self-heal. Only when the binary is bundled
@@ -68,14 +78,27 @@ pub fn run() {
             commands::get_engine_info,
             commands::analyze_url,
             commands::start_video_download,
+            commands::start_file_download,
+            commands::start_torrent,
+            commands::torrent_files,
+            commands::select_torrent_files,
             commands::pause_job,
             commands::resume_job,
             commands::cancel_job,
             commands::remove_job,
             commands::list_jobs,
+            commands::list_history,
+            commands::clear_history,
             commands::update_ytdlp,
         ])
         .setup(|app| {
+            // Local DB (history) in the app data dir.
+            let data_dir = app.path().app_data_dir().expect("app data dir");
+            let db = Db::open(&data_dir.join("gruzly.db")).expect("open local db");
+            app.manage(AppState {
+                aria2: tokio::sync::Mutex::new(None),
+                db: Arc::new(db),
+            });
             schedule_ytdlp_auto_update(app.handle().clone());
             Ok(())
         })

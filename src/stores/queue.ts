@@ -5,15 +5,20 @@ import {
   type JobView,
   type ProgressEvent,
   type StateEvent,
+  type TorrentReadyEvent,
 } from "@/lib/api";
 
 type QueueState = {
   jobs: Map<string, JobView>;
   order: string[];
   connected: boolean;
+  /** Torrent whose metadata resolved and awaits file selection. */
+  torrentReady: TorrentReadyEvent | null;
   hydrate: () => Promise<void>;
   applyProgress: (e: ProgressEvent) => void;
   applyState: (e: StateEvent) => void;
+  applyTorrentReady: (e: TorrentReadyEvent) => void;
+  dismissTorrent: () => void;
   attach: () => Promise<() => void>;
 };
 
@@ -27,6 +32,7 @@ export const useQueueStore = create<QueueState>((set, get) => ({
   jobs: new Map(),
   order: [],
   connected: false,
+  torrentReady: null,
 
   hydrate: async () => {
     try {
@@ -90,12 +96,19 @@ export const useQueueStore = create<QueueState>((set, get) => ({
     }
   },
 
+  applyTorrentReady: (e) => {
+    set({ torrentReady: e });
+  },
+
+  dismissTorrent: () => set({ torrentReady: null }),
+
   attach: async () => {
     // detach previous listeners first (StrictMode double-mount safe)
     for (const fn of unlisten) fn();
     unlisten = await Promise.all([
       listen<ProgressEvent>("job://progress", (e) => get().applyProgress(e.payload)),
       listen<StateEvent>("job://state", (e) => get().applyState(e.payload)),
+      listen<TorrentReadyEvent>("torrent://ready", (e) => get().applyTorrentReady(e.payload)),
     ]);
     set({ connected: true });
     return () => {

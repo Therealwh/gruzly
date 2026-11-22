@@ -5,6 +5,7 @@ import { Header } from "@/components/layout/Header";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TitleBar } from "@/components/layout/TitleBar";
 import { TooltipProvider, Toaster } from "@/components/ui";
+import { TorrentModal } from "@/features/files/TorrentModal";
 import { isPageId, type PageId } from "@/lib/navigation";
 import { About } from "@/pages/About";
 import { Dashboard } from "@/pages/Dashboard";
@@ -76,6 +77,7 @@ export default function App() {
           </main>
         </div>
         <CommandPalette onNavigate={navigate} />
+        <TorrentModal />
         <Toaster />
       </div>
     </TooltipProvider>

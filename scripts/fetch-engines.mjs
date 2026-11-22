@@ -133,12 +133,16 @@ function findFile(root, fileName) {
 function copyBin(from, to) {
   rmSync(to, { force: true });
   mkdirSync(dirname(to), { recursive: true });
-  // rename within a volume; copy+drop across volumes
+  // rename within a volume; copy across volumes/devices.
+  // Never delete the source unless it is one of our temp copies
+  // (system binaries from `where/which` stay untouched).
   try {
     renameSync(from, to);
   } catch {
     copyFileSync(from, to);
-    rmSync(from, { force: true });
+    if (from.startsWith(BIN_DIR)) {
+      rmSync(from, { force: true });
+    }
   }
 }
 

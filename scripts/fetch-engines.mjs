@@ -79,8 +79,7 @@ async function fetchEngine(name, spec, outFile) {
   if (typeof entry === "object" && entry.system) {
     // Fall back to the system binary (CI installs it via brew/apt).
     const found = execFileSync(process.platform === "win32" ? "where" : "which", [entry.system], { encoding: "utf8" })
-      .split(/?
-/)[0]
+      .split(/\r?\n/)[0]
       ?.trim();
     if (!found) throw new Error(`system binary ${entry.system} not found — install it first`);
     console.log(`[system] ${name} ← ${found}`);

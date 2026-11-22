@@ -299,7 +299,7 @@ async fn set_status(app: &AppHandle, job: &Job, status: JobStatus, error: Option
             .ok()
             .and_then(|v| v.as_str().map(String::from))
             .unwrap_or_default();
-        let started_at = (status == JobStatus::Downloading).then(|| now_ms());
+        let started_at = (status == JobStatus::Downloading).then(now_ms);
         let error_str = error.clone();
         let _ = tokio::task::spawn_blocking(move || {
             db.patch_history_status(&id, &status_str, started_at, error_str.as_deref())

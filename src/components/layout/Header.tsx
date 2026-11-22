@@ -16,7 +16,7 @@ export function Header({ page }: { page: PageId }) {
       <h1 className="text-sm font-semibold tracking-tight text-text">{t(`nav.${page}`)}</h1>
 
       <div className="flex items-center gap-1.5">
-        <Tooltip content={t("palette.actions.palette", { defaultValue: "" }) || t("settings.hotkeys.actions.palette")}>
+        <Tooltip content={t("settings.hotkeys.actions.palette")}>
           <button
             onClick={togglePalette}
             className="flex h-7 items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2 text-2xs text-text-muted transition-colors hover:border-border-strong hover:text-text-secondary"

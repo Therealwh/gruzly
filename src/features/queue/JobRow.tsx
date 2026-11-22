@@ -112,7 +112,7 @@ export function JobRow({ job, compact = false }: { job: JobView; compact?: boole
                 <RowAction
                   icon={FolderOpen}
                   label={t("common.openFolder")}
-                  onClick={() => void openFolder(job.folder as string)}
+                  onClick={() => void openFolder(job.folder as string, t("errors.generic"))}
                 />
               )}
               <RowAction
@@ -141,12 +141,13 @@ export function JobRow({ job, compact = false }: { job: JobView; compact?: boole
   );
 }
 
-async function openFolder(folder: string): Promise<void> {
+async function openFolder(folder: string, failMessage: string): Promise<void> {
   try {
     const { openPath } = await import("@tauri-apps/plugin-opener");
     await openPath(folder);
-  } catch {
-    /* browser mode */
+  } catch (e) {
+    console.warn("openFolder failed:", e);
+    toast.error(failMessage);
   }
 }
 

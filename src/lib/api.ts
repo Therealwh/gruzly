@@ -138,16 +138,24 @@ export async function startVideoDownload(
 export async function startFileDownload(
   url: string,
   title?: string,
+  folder?: string | null,
 ): Promise<string> {
-  return call<string>("start_file_download", { url, title: title ?? null });
+  return call<string>("start_file_download", {
+    url,
+    title: title ?? null,
+    folder: folder ?? null,
+  });
 }
 
 export type TorrentSource =
   | { magnet: string }
   | { torrentBase64: string };
 
-export async function startTorrent(source: TorrentSource): Promise<string> {
-  return call<string>("start_torrent", { source });
+export async function startTorrent(
+  source: TorrentSource,
+  folder?: string | null,
+): Promise<string> {
+  return call<string>("start_torrent", { source, folder: folder ?? null });
 }
 
 export type TorrentFileInfo = {

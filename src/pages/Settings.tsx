@@ -275,9 +275,35 @@ function DownloadsSection() {
   const { t } = useTranslation();
   const settings = useSettingsStore();
 
+  const pickFolder = async () => {
+    try {
+      const picked = await openDialog({ directory: true, multiple: false });
+      if (typeof picked === "string") {
+        settings.update({ downloadFolder: picked });
+        toast.success(t("toasts.settingsSaved"));
+      }
+    } catch {
+      toast.error(t("errors.generic"));
+    }
+  };
+
   return (
     <>
       <Card>
+        <Row label={t("settings.general.folder")} stacked>
+          <div className="flex items-center gap-2">
+            <Input
+              value={settings.downloadFolder}
+              onChange={(e) => settings.update({ downloadFolder: e.target.value })}
+              placeholder={t("presets.fields.folderPlaceholder")}
+              className="flex-1"
+              aria-label={t("settings.general.folder")}
+            />
+            <Button variant="secondary" onClick={() => void pickFolder()}>
+              {t("settings.general.choose")}
+            </Button>
+          </div>
+        </Row>
         <Row label={t("settings.downloads.parallel")}>
           <Segmented
             value={String(settings.parallel)}

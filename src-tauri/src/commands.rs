@@ -81,8 +81,9 @@ pub async fn start_file_download(
     queue: State<'_, QueueManager>,
     url: String,
     title: Option<String>,
+    folder: Option<String>,
 ) -> CmdResult<String> {
-    queue::start_file(app, queue, url, title)
+    queue::start_file(app, queue, url, title, folder)
         .await
         .map_err(|e| CommandError::of("downloadStart", e))
 }
@@ -92,8 +93,9 @@ pub async fn start_torrent(
     app: tauri::AppHandle,
     queue: State<'_, QueueManager>,
     source: TorrentSource,
+    folder: Option<String>,
 ) -> CmdResult<String> {
-    queue::start_torrent(app, queue, source)
+    queue::start_torrent(app, queue, source, folder)
         .await
         .map_err(|e| CommandError::of("downloadStart", e))
 }

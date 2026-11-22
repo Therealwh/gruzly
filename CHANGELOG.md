@@ -3,6 +3,22 @@
 All notable changes to Gruzly are documented here. Format: Keep a Changelog,
 versioning: SemVer.
 
+## [0.1.1] — 2026-11-22
+
+### Fixed
+- Windows: engine processes no longer flash a console window (CREATE_NO_WINDOW
+  on every spawn: probes, yt-dlp analysis/downloads, aria2 daemon, updater).
+- "Open folder" now works — opener plugin got a path scope; failures surface
+  as a toast instead of being swallowed.
+- Download folder setting now applies to files and torrents too (aria2 gets
+  the `dir` option), not only to video downloads.
+- Settings → Downloads gained the download-folder picker (same setting as in
+  General) and shows a clear i18n tooltip for the command-palette button.
+
+### Added
+- deb package declares `aria2` dependency; Linux builds ship an exec-shim
+  when no prebuilt binary exists.
+
 ## [0.1.0] — 2026-11-22
 
 First MVP.

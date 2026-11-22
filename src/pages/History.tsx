@@ -19,6 +19,7 @@ import {
 } from "@/lib/api";
 import { formatBytes, formatDateTime } from "@/lib/format";
 import { useUiStore } from "@/stores/ui";
+import { useSettingsStore } from "@/stores/settings";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 type DateFilter = "all" | "today" | "week" | "month";
@@ -224,7 +225,11 @@ function HistoryList({
                       variant="ghost"
                       aria-label={t("history.redownload")}
                       onClick={() =>
-                        void startFileDownload(r.url)
+                        void startFileDownload(
+                          r.url,
+                          undefined,
+                          useSettingsStore.getState().downloadFolder || null,
+                        )
                           .then(() => toast.success(t("toasts.downloadStarted")))
                           .catch(() => toast.error(t("errors.generic")))
                       }

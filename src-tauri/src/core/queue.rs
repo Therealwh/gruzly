@@ -25,6 +25,10 @@ use super::db::HistoryRecord;
 use super::engines;
 use super::ytdlp::{self, VideoDownloadSpec, YtdlpProgress};
 
+/// CREATE_NO_WINDOW: engine processes run inside a GUI app on Windows.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum JobKind {
@@ -508,7 +512,10 @@ async fn run_video_job(
     }
     set_status(&app, &job, JobStatus::Downloading, None).await;
 
-    let mut child = match Command::new(&binary)
+    let mut cmd = Command::new(&binary);
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    let mut child = match cmd
         .args(&args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
@@ -643,7 +650,10 @@ async fn run_video_job(
 pub async fn update_ytdlp(app: AppHandle) -> Result<String, String> {
     let binary =
         engines::find_engine(&app, "yt-dlp").ok_or_else(|| "yt-dlp not found".to_string())?;
-    let out = tokio::process::Command::new(binary)
+    let mut updater_cmd = tokio::process::Command::new(binary);
+    #[cfg(windows)]
+    updater_cmd.creation_flags(CREATE_NO_WINDOW);
+    let out = updater_cmd
         .arg("--update")
         .stdin(std::process::Stdio::null())
         .output()
@@ -759,11 +769,16 @@ pub async fn start_file(
     queue: State<'_, QueueManager>,
     url: String,
     title: Option<String>,
+    folder: Option<String>,
 ) -> Result<String, String> {
     super::ytdlp::validate_url(&url).map_err(|e| e.to_string())?;
     let daemon = ensure_aria2(&app).await?;
+    let mut options = json!({});
+    if let Some(dir) = folder.as_ref().filter(|d| !d.trim().is_empty()) {
+        options["dir"] = json!(dir);
+    }
     let gid = daemon
-        .add_uri(std::slice::from_ref(&url), json!({}), false)
+        .add_uri(std::slice::from_ref(&url), options, false)
         .await
         .map_err(|e| e.to_string())?;
     if gid.is_empty() {
@@ -773,7 +788,7 @@ pub async fn start_file(
     let mut job = Arc::new(base_job(
         url.clone(),
         title.unwrap_or_else(|| default_title_for_url(&url)),
-        Some(daemon.download_dir.to_string_lossy().to_string()),
+        Some(folder.unwrap_or_else(|| daemon.download_dir.to_string_lossy().to_string())),
     ));
     if let Some(j) = Arc::get_mut(&mut job) {
         j.kind = JobKind::File;
@@ -802,23 +817,28 @@ pub async fn start_torrent(
     app: AppHandle,
     queue: State<'_, QueueManager>,
     source: TorrentSource,
+    folder: Option<String>,
 ) -> Result<String, String> {
     if let TorrentSource::Magnet(magnet) = &source {
         super::ytdlp::validate_magnet(magnet).map_err(|e| e.to_string())?;
     }
     let daemon = ensure_aria2(&app).await?;
+    let mut options = json!({});
+    if let Some(dir) = folder.as_ref().filter(|d| !d.trim().is_empty()) {
+        options["dir"] = json!(dir);
+    }
 
     let (gid, url) = match &source {
         TorrentSource::Magnet(magnet) => (
             daemon
-                .add_uri(std::slice::from_ref(magnet), json!({}), true)
+                .add_uri(std::slice::from_ref(magnet), options, true)
                 .await
                 .map_err(|e| e.to_string())?,
             magnet.clone(),
         ),
         TorrentSource::TorrentBase64(b64) => (
             daemon
-                .add_torrent(b64, json!({}), true)
+                .add_torrent(b64, options, true)
                 .await
                 .map_err(|e| e.to_string())?,
             "torrent".into(),
@@ -834,7 +854,7 @@ pub async fn start_torrent(
             TorrentSource::Magnet(_) => "Magnet link".into(),
             TorrentSource::TorrentBase64(_) => "Torrent".into(),
         },
-        Some(daemon.download_dir.to_string_lossy().to_string()),
+        Some(folder.unwrap_or_else(|| daemon.download_dir.to_string_lossy().to_string())),
     ));
     if let Some(j) = Arc::get_mut(&mut job) {
         j.kind = JobKind::Torrent;

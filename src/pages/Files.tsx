@@ -5,6 +5,7 @@ import { Button, EmptyState, Input, InputIcon, Textarea, toast } from "@/compone
 import { CommandError, startFileDownload, startTorrent } from "@/lib/api";
 import { parseUrlKind, splitBatchInput } from "@/lib/urls";
 import { useAnalysisStore } from "@/stores/analysis";
+import { useSettingsStore } from "@/stores/settings";
 
 /** Reads a local .torrent file as base64 for aria2.addTorrent. */
 function fileToBase64(file: File): Promise<string> {
@@ -43,12 +44,13 @@ export function Files() {
         toast.warning(`${t("errors.urlInvalid")}: ${value.slice(0, 60)}`);
         return false;
       }
+      const folder = useSettingsStore.getState().downloadFolder || null;
       try {
         if (kind === "magnet") {
-          await startTorrent({ magnet: value });
+          await startTorrent({ magnet: value }, folder);
         } else {
           // .torrent URLs too — aria2 detects them via addUri
-          await startFileDownload(value);
+          await startFileDownload(value, undefined, folder);
         }
         return true;
       } catch (e) {
@@ -90,9 +92,10 @@ export function Files() {
 
   const onTorrentFile = useCallback(
     async (file: File) => {
+      const folder = useSettingsStore.getState().downloadFolder || null;
       try {
         const b64 = await fileToBase64(file);
-        await startTorrent({ torrentBase64: b64 });
+        await startTorrent({ torrentBase64: b64 }, folder);
         toast.success(t("toasts.downloadStarted"));
       } catch (e) {
         if (e instanceof CommandError && e.code === "browserMode") {

@@ -12,6 +12,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
+/// CREATE_NO_WINDOW: engine probes must never flash a console window.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
@@ -180,7 +184,13 @@ pub fn find_engine(app: &tauri::AppHandle, id: &str) -> Option<PathBuf> {
 fn probe_version(binary: &PathBuf, args: &[&str]) -> Result<String, EngineError> {
     use std::io::Read;
 
-    let mut child = Command::new(binary)
+    #[cfg(windows)]
+    use std::os::windows::process::CommandExt as _;
+
+    let mut cmd = Command::new(binary);
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    let mut child = cmd
         .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())

@@ -12,6 +12,10 @@ use serde_json::json;
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
+/// CREATE_NO_WINDOW: the daemon runs headless inside a GUI app.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 #[derive(Debug, thiserror::Error)]
 pub enum Aria2Error {
     #[error("aria2 not found")]
@@ -66,7 +70,10 @@ impl Aria2Daemon {
             "--quiet=true".into(),
         ];
 
-        let child = Command::new(binary)
+        let mut cmd = Command::new(binary);
+        #[cfg(windows)]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        let child = cmd
             .args(&args)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())

@@ -7,6 +7,10 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
 
+/// CREATE_NO_WINDOW: yt-dlp runs inside a GUI app — no console flashes.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 use serde::{Deserialize, Serialize};
 
 /// How long a single analysis may take before we give up.
@@ -264,7 +268,13 @@ fn base_analysis_args() -> Vec<&'static str> {
 fn run_ytdlp(binary: &PathBuf, args: &[String]) -> Result<String, YtdlpError> {
     use std::io::Read;
 
-    let mut child = std::process::Command::new(binary)
+    let mut cmd = std::process::Command::new(binary);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let mut child = cmd
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

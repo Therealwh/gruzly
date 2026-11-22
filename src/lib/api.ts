@@ -214,6 +214,14 @@ export async function setSpeedLimit(limit: string): Promise<void> {
   return call<void>("set_speed_limit", { limit });
 }
 
+export async function setCloseToTray(enabled: boolean): Promise<void> {
+  return call<void>("set_close_to_tray", { enabled });
+}
+
+export async function setTrayLanguage(lang: string): Promise<void> {
+  return call<void>("set_tray_language", { lang });
+}
+
 // ---- history ----
 
 export type HistoryRecord = {

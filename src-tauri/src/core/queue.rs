@@ -1209,6 +1209,72 @@ pub async fn set_parallel(queue: State<'_, QueueManager>, n: u32) -> Result<(), 
     Ok(())
 }
 
+/// Pauses every running download (video jobs via kill signal, aria2 via RPC).
+pub async fn pause_all_jobs(app: AppHandle, queue: State<'_, QueueManager>) -> usize {
+    let jobs = queue.jobs.lock().await;
+    let order = queue.order.lock().await;
+    let mut paused = 0;
+    for id in order.iter() {
+        if let Some(job) = jobs.get(id) {
+            let status = job.status.lock().await.0.clone();
+            if status != JobStatus::Downloading && status != JobStatus::Merging {
+                continue;
+            }
+            if job.engine == "aria2" {
+                if let Some(gid) = job.gid.lock().await.clone() {
+                    if let Ok(daemon) = ensure_aria2(&app).await {
+                        let _ = daemon.pause(&gid).await;
+                        paused += 1;
+                    }
+                }
+            } else {
+                job.pause_requested.store(true, Ordering::SeqCst);
+                job.kill.notify_waiters();
+                paused += 1;
+            }
+        }
+    }
+    paused
+}
+
+/// Resumes every paused download.
+pub async fn resume_all_jobs(app: AppHandle, queue: State<'_, QueueManager>) -> usize {
+    let jobs = queue.jobs.lock().await;
+    let order = queue.order.lock().await;
+    let mut resumed = 0;
+    for id in order.iter() {
+        if let Some(job) = jobs.get(id) {
+            if job.status.lock().await.0 != JobStatus::Paused {
+                continue;
+            }
+            let app = app.clone();
+            if job.engine == "aria2" {
+                if let Some(gid) = job.gid.lock().await.clone() {
+                    if let Ok(daemon) = ensure_aria2(&app).await {
+                        let _ = daemon.unpause(&gid).await;
+                        resumed += 1;
+                    }
+                }
+            } else if job.spec.is_some() {
+                let job = job.clone();
+                let binary = engines::find_engine(&app, "yt-dlp");
+                let ffmpeg = engines::find_engine(&app, "ffmpeg");
+                if let (Some(binary), Some(spec)) = (binary, job.spec.clone()) {
+                    if let Ok(args) = ytdlp::download_args(&spec, ffmpeg.as_ref()) {
+                        set_status(&app, &job, JobStatus::Queued, None).await;
+                        tokio::spawn(async move {
+                            let queue: State<'_, QueueManager> = app.state();
+                            run_video_job(app.clone(), &queue, job, binary, args).await;
+                        });
+                        resumed += 1;
+                    }
+                }
+            }
+        }
+    }
+    resumed
+}
+
 /// Applies the global aria2 download speed limit live (e.g. "10M", "" = off).
 pub async fn set_speed_limit(app: AppHandle, limit: String) -> Result<(), String> {
     let daemon = ensure_aria2(&app).await?;

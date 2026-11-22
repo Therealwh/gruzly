@@ -1,6 +1,7 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { create } from "zustand";
 import {
+  isTauri,
   listJobs,
   type JobView,
   type ProgressEvent,
@@ -23,6 +24,33 @@ type QueueState = {
 };
 
 let unlisten: UnlistenFn[] = [];
+
+/** System notification for completed/failed downloads (Settings-gated). */
+async function notifyOnTerminal(
+  status: StateEvent["status"],
+  title: string | null,
+  error: string | null,
+): Promise<void> {
+  if (!isTauri() || (status !== "completed" && status !== "failed")) return;
+  const { useSettingsStore } = await import("@/stores/settings");
+  if (!useSettingsStore.getState().notifications) return;
+  try {
+    const { isPermissionGranted, requestPermission, sendNotification } = await import(
+      "@tauri-apps/plugin-notification"
+    );
+    if (!(await isPermissionGranted())) {
+      if (!(await requestPermission())) return;
+    }
+    const { t } = await import("@/lib/i18n");
+    const body = [title, error].filter(Boolean).join("\n");
+    sendNotification({
+      title: status === "completed" ? t("toasts.downloadCompleted") : t("toasts.downloadFailed"),
+      body,
+    });
+  } catch {
+    /* notifications unavailable */
+  }
+}
 
 /**
  * Live queue state, driven by Rust events (throttled ≤4/s per job).
@@ -73,6 +101,7 @@ export const useQueueStore = create<QueueState>((set, get) => ({
         title: e.title ?? existing.title,
       });
       set({ jobs: next });
+      void notifyOnTerminal(e.status, e.title ?? existing.title, e.error);
     } else if (e.title !== null) {
       // New job announced before listJobs saw it.
       const next = new Map(jobs);

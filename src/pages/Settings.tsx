@@ -9,6 +9,7 @@ import {
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { disable, enable } from "@tauri-apps/plugin-autostart";
 import {
   Badge,
   Button,
@@ -140,8 +141,6 @@ function Card({ title, children }: { title?: string; children: React.ReactNode }
 function GeneralSection() {
   const { t } = useTranslation();
   const settings = useSettingsStore();
-  const [notifications, setNotifications] = useState(true);
-  const [closeToTray, setCloseToTray] = useState(true);
 
   const pickFolder = async () => {
     try {
@@ -152,6 +151,17 @@ function GeneralSection() {
       }
     } catch {
       /* browser mode or dialog cancelled */
+    }
+  };
+
+  const toggleStartup = async (v: boolean) => {
+    try {
+      if (v) await enable();
+      else await disable();
+      settings.update({ runAtStartup: v });
+      toast.success(t("toasts.settingsSaved"));
+    } catch {
+      toast.error(t("errors.generic"));
     }
   };
 
@@ -171,6 +181,13 @@ function GeneralSection() {
           </Button>
         </div>
       </Row>
+      <Row label={t("settings.general.startup")} hint={t("settings.general.startupHint")}>
+        <Switch
+          checked={settings.runAtStartup}
+          onCheckedChange={(v) => void toggleStartup(v)}
+          label={t("settings.general.startup")}
+        />
+      </Row>
       <Row label={t("settings.engines.autoUpdate")} hint={t("settings.engines.autoUpdateHint")}>
         <Switch
           checked={settings.enginesAutoUpdate}
@@ -180,15 +197,15 @@ function GeneralSection() {
       </Row>
       <Row label={t("settings.general.tray")} hint={t("settings.general.trayHint")}>
         <Switch
-          checked={closeToTray}
-          onCheckedChange={setCloseToTray}
+          checked={settings.closeToTray}
+          onCheckedChange={(v) => settings.update({ closeToTray: v })}
           label={t("settings.general.tray")}
         />
       </Row>
       <Row label={t("settings.general.notifications")} hint={t("settings.general.notificationsHint")}>
         <Switch
-          checked={notifications}
-          onCheckedChange={setNotifications}
+          checked={settings.notifications}
+          onCheckedChange={(v) => settings.update({ notifications: v })}
           label={t("settings.general.notifications")}
         />
       </Row>

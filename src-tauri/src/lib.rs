@@ -13,6 +13,7 @@ use std::sync::Arc;
 use core::aria2::Aria2Daemon;
 use core::db::Db;
 use core::queue::QueueManager;
+use core::tray;
 use tauri::Manager;
 use tauri_plugin_log::Target;
 use tauri_plugin_log::TargetKind;
@@ -21,6 +22,8 @@ use tauri_plugin_log::TargetKind;
 pub struct AppState {
     pub aria2: tokio::sync::Mutex<Option<Arc<Aria2Daemon>>>,
     pub db: Arc<Db>,
+    /// Settings → General → "Close to tray": hide instead of exiting.
+    pub close_to_tray: std::sync::atomic::AtomicBool,
 }
 
 /// Fire-and-forget yt-dlp self-update at startup: extractors break
@@ -95,6 +98,8 @@ pub fn run() {
             commands::update_ytdlp,
             commands::set_parallel,
             commands::set_speed_limit,
+            commands::set_close_to_tray,
+            commands::set_tray_language,
         ])
         .setup(|app| {
             // Local DB (history) in the app data dir.
@@ -103,8 +108,33 @@ pub fn run() {
             app.manage(AppState {
                 aria2: tokio::sync::Mutex::new(None),
                 db: Arc::new(db),
+                close_to_tray: std::sync::atomic::AtomicBool::new(true),
             });
-            schedule_ytdlp_auto_update(app.handle().clone());
+
+            let handle = app.handle().clone();
+            tray::build_tray(&handle, "en").expect("build tray");
+
+            // Close-to-tray: hide the main window instead of exiting when
+            // the setting is on.
+            let handle_for_close = handle.clone();
+            app.get_webview_window("main")
+                .expect("main window")
+                .on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        let close_to_tray = handle_for_close
+                            .state::<AppState>()
+                            .close_to_tray
+                            .load(std::sync::atomic::Ordering::SeqCst);
+                        if close_to_tray {
+                            api.prevent_close();
+                            if let Some(window) = handle_for_close.get_webview_window("main") {
+                                let _ = window.hide();
+                            }
+                        }
+                    }
+                });
+
+            schedule_ytdlp_auto_update(handle);
             Ok(())
         })
         .run(tauri::generate_context!())

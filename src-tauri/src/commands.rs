@@ -216,6 +216,19 @@ pub async fn set_parallel(queue: State<'_, QueueManager>, n: u32) -> CmdResult<(
 }
 
 #[tauri::command]
+pub async fn set_close_to_tray(state: State<'_, AppState>, enabled: bool) -> CmdResult<()> {
+    state
+        .close_to_tray
+        .store(enabled, std::sync::atomic::Ordering::SeqCst);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_tray_language(app: tauri::AppHandle, lang: String) -> CmdResult<()> {
+    crate::core::tray::build_tray(&app, &lang).map_err(|e| CommandError::of("tray", e.to_string()))
+}
+
+#[tauri::command]
 pub async fn set_speed_limit(app: tauri::AppHandle, limit: String) -> CmdResult<()> {
     queue::set_speed_limit(app, limit)
         .await

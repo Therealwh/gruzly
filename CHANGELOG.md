@@ -3,6 +3,19 @@
 All notable changes to Gruzly are documented here. Format: Keep a Changelog,
 versioning: SemVer.
 
+## [0.1.4] — 2026-11-22
+
+### Added
+- System tray with a context menu: Open Gruzly, Pause all, Resume all,
+  Quit. Left click opens the window. Menu labels follow the UI language.
+- Close-to-tray: closing the window keeps downloads running (Settings →
+  General → "Close to tray", on by default).
+- Run-at-startup toggle wired to the system autostart plugin.
+- System notifications when a download completes or fails (Settings-gated).
+- Windows installer now stops running Gruzly processes before extracting
+  files, so updating over a running instance no longer fails with
+  "Error opening file for writing".
+
 ## [0.1.3] — 2026-11-22
 
 ### Fixed

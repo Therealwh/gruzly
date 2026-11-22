@@ -4,6 +4,7 @@ import { Menu, MenuContent, MenuItem, MenuTrigger, Segmented, Tooltip, toast } f
 import { LANGUAGES } from "@/i18n";
 import { cn } from "@/lib/utils";
 import type { PageId } from "@/lib/navigation";
+import { setTrayLanguage } from "@/lib/api";
 import { useUiStore } from "@/stores/ui";
 
 /** Top bar of the content area: page title, theme, language, palette. */
@@ -58,6 +59,7 @@ export function Header({ page }: { page: PageId }) {
                 onSelect={() => {
                   if (language !== l.code) {
                     setLanguage(l.code);
+                    void setTrayLanguage(l.code).catch(() => undefined);
                     toast.success(t("toasts.languageChanged"));
                   }
                 }}

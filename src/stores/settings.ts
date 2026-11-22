@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { setParallel, setSpeedLimit } from "@/lib/api";
+import { setCloseToTray, setParallel, setSpeedLimit } from "@/lib/api";
 
 /** Browser-selectable cookie sources (yt-dlp --cookies-from-browser). */
 export const BROWSERS = ["Chrome", "Firefox", "Edge", "Brave", "Chromium", "Opera", "Vivaldi"] as const;
@@ -19,6 +19,9 @@ export type Settings = {
   proxyHost: string;
   proxyPort: string;
   enginesAutoUpdate: boolean;
+  runAtStartup: boolean;
+  closeToTray: boolean;
+  notifications: boolean;
 };
 
 export type SettingsActions = {
@@ -42,6 +45,9 @@ const DEFAULTS: Settings = {
   proxyHost: "",
   proxyPort: "",
   enginesAutoUpdate: true,
+  runAtStartup: false,
+  closeToTray: true,
+  notifications: true,
 };
 
 function load(): Settings {
@@ -78,6 +84,9 @@ function pushBackend(next: Settings, prev: Settings): void {
   if (next.speedLimit !== prev.speedLimit) {
     void setSpeedLimit(next.speedLimit).catch(() => {/* browser mode */});
   }
+  if (next.closeToTray !== prev.closeToTray) {
+    void setCloseToTray(next.closeToTray).catch(() => {/* browser mode */});
+  }
 }
 
 export const useSettingsStore = create<Settings & SettingsActions>((set, get) => ({
@@ -93,8 +102,9 @@ export const useSettingsStore = create<Settings & SettingsActions>((set, get) =>
 
   hydrateFromBackend: async () => {
     const s = get();
-    // Re-apply limits at launch (aria2 daemon starts lazily; the apply
-    // command retries once the daemon is up — failures are non-fatal).
+    // Re-apply window/tray behavior and limits at launch (failures are
+    // non-fatal — in a plain browser these IPC calls do not exist).
+    await setCloseToTray(s.closeToTray).catch(() => undefined);
     await setParallel(s.parallel).catch(() => undefined);
     if (s.speedLimit) await setSpeedLimit(s.speedLimit).catch(() => undefined);
   },

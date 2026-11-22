@@ -6,6 +6,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { TitleBar } from "@/components/layout/TitleBar";
 import { UpdateBanner } from "@/components/layout/UpdateBanner";
 import { TooltipProvider, Toaster } from "@/components/ui";
+import { setTrayLanguage } from "@/lib/api";
 import { TorrentModal } from "@/features/files/TorrentModal";
 import { isPageId, type PageId } from "@/lib/navigation";
 import { About } from "@/pages/About";
@@ -18,7 +19,7 @@ import { Settings } from "@/pages/Settings";
 import { Video } from "@/pages/Video";
 import { useQueueStore } from "@/stores/queue";
 import { useSettingsStore } from "@/stores/settings";
-import { bootstrapUi } from "@/stores/ui";
+import { bootstrapUi, useUiStore } from "@/stores/ui";
 
 const PAGE_STORAGE_KEY = "gruzly.page";
 
@@ -48,6 +49,7 @@ export default function App() {
   // Attach Rust event listeners once (StrictMode double-mount safe).
   const attach = useQueueStore((s) => s.attach);
   const hydrateSettings = useSettingsStore((s) => s.hydrateFromBackend);
+  const language = useUiStore((s) => s.language);
   useEffect(() => {
     const detachPromise = attach();
     void hydrateSettings();
@@ -55,6 +57,11 @@ export default function App() {
       void detachPromise.then((detach) => detach());
     };
   }, [attach, hydrateSettings]);
+
+  // Tray menu follows the UI language.
+  useEffect(() => {
+    void setTrayLanguage(language).catch(() => undefined);
+  }, [language]);
 
   useEffect(() => {
     document.title = `${t("app.name")} — ${t(`nav.${page}`)}`;

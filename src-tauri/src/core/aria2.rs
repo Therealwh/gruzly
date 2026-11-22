@@ -221,12 +221,48 @@ impl Aria2Daemon {
                         "downloadSpeed",
                         "files",
                         "bittorrent",
-                        "errorMessage"
+                        "errorMessage",
+                        "infoHash"
                     ]
                 ])),
             )
             .await?;
         serde_json::from_value(r).map_err(|e| Aria2Error::Rpc(e.to_string()))
+    }
+
+    /// Every task the daemon still remembers: active, waiting, stopped.
+    pub async fn all_statuses(&self) -> Result<Vec<Aria2Status>, Aria2Error> {
+        let keys = ["gid", "status", "bittorrent", "infoHash"];
+        let mut out = Vec::new();
+        let active = self.rpc("tellActive", self.authed(json!([keys]))).await?;
+        if let Some(list) = active.as_array() {
+            for item in list {
+                if let Ok(st) = serde_json::from_value::<Aria2Status>(item.clone()) {
+                    out.push(st);
+                }
+            }
+        }
+        let waiting = self
+            .rpc("tellWaiting", self.authed(json!([0, 100, keys])))
+            .await?;
+        if let Some(list) = waiting.as_array() {
+            for item in list {
+                if let Ok(st) = serde_json::from_value::<Aria2Status>(item.clone()) {
+                    out.push(st);
+                }
+            }
+        }
+        let stopped = self
+            .rpc("tellStopped", self.authed(json!([0, 200, keys])))
+            .await?;
+        if let Some(list) = stopped.as_array() {
+            for item in list {
+                if let Ok(st) = serde_json::from_value::<Aria2Status>(item.clone()) {
+                    out.push(st);
+                }
+            }
+        }
+        Ok(out)
     }
 
     pub async fn pause(&self, gid: &str) -> Result<(), Aria2Error> {
@@ -326,6 +362,8 @@ pub struct Aria2File {
 pub struct Aria2Status {
     pub gid: String,
     pub status: String, // active | waiting | paused | error | complete | removed
+    #[serde(default, rename = "infoHash")]
+    pub info_hash: Option<String>,
     #[serde(default, rename = "totalLength")]
     pub total_length: String,
     #[serde(default, rename = "completedLength")]

@@ -97,7 +97,14 @@ pub async fn start_torrent(
 ) -> CmdResult<String> {
     queue::start_torrent(app, queue, source, folder)
         .await
-        .map_err(|e| CommandError::of("downloadStart", e))
+        .map_err(|e| {
+            // duplicate-detection returns its own stable codes
+            if e == "torrentActive" || e == "torrentComplete" {
+                CommandError::of(&e, e.clone())
+            } else {
+                CommandError::of("downloadStart", e)
+            }
+        })
 }
 
 #[tauri::command]

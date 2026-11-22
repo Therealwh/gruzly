@@ -56,6 +56,10 @@ export function Files() {
       } catch (e) {
         if (e instanceof CommandError && e.code === "browserMode") {
           toast.warning(t("errors.generic"));
+        } else if (e instanceof CommandError && e.code === "torrentActive") {
+          toast.info(t("errors.torrentActive"));
+        } else if (e instanceof CommandError && e.code === "torrentComplete") {
+          toast.info(t("errors.torrentComplete"));
         } else {
           const detail = e instanceof Error ? e.message.slice(0, 140) : "";
           toast.error(detail ? `${t("errors.generic")}: ${detail}` : t("errors.generic"));

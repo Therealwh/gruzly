@@ -433,7 +433,9 @@
     "urlInvalid": "This doesn't look like a valid link",
     "urlUnsupported": "This site isn't supported for video analysis. Try a direct file link instead.",
     "analysisFailed": "Couldn't analyze this link. The site may be unavailable or unsupported.",
-    "rpcFailed": "Download engine is not responding. Restarting it usually helps."
+    "rpcFailed": "Download engine is not responding. Restarting it usually helps.",
+    "torrentActive": "This torrent is already downloading — find it in the queue",
+    "torrentComplete": "This torrent has already been downloaded"
   },
   "format": {
     "perSecond": "{{value}}/s",

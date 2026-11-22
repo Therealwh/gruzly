@@ -3,6 +3,19 @@
 All notable changes to Gruzly are documented here. Format: Keep a Changelog,
 versioning: SemVer.
 
+## [0.1.3] — 2026-11-22
+
+### Fixed
+- Torrents: re-adding a torrent that already exists in the session no longer
+  fails — the existing task is picked up (file selection modal opens again,
+  active tasks are reported instead of being duplicated). Info-hash is
+  computed from magnet links and `.torrent` payloads (bencode + SHA-1).
+- Completed downloads clean up stale `<file>.aria2` control files left by a
+  previously killed daemon.
+- Video downloads of fragmented streams (HLS/DASH) now show total size and a
+  real progress bar — the total is derived from fragment progress when
+  yt-dlp does not report it up front.
+
 ## [0.1.2] — 2026-11-22
 
 ### Fixed

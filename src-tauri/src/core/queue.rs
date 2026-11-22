@@ -126,6 +126,10 @@ fn make_id() -> String {
     uuid::Uuid::new_v4().simple().to_string()
 }
 
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
@@ -255,8 +259,20 @@ async fn on_progress(app: &AppHandle, job: &Job, p: YtdlpProgress) {
         if let Some(d) = p.downloaded_bytes {
             progress.downloaded = d;
         }
-        if p.total().is_some() {
-            progress.total = p.total();
+        match p.total() {
+            Some(t) => progress.total = Some(t),
+            None => {
+                // Fragmented protocols (m3u8/DASH) ship no total: derive one
+                // from fragment progress so the bar and size stay visible.
+                if let (Some(idx), Some(count)) = (p.fragment_index, p.fragment_count) {
+                    if count > 0 && idx > 0 {
+                        let frac = idx as f64 / count as f64;
+                        if frac > 0.02 && progress.downloaded > 0.0 {
+                            progress.total = Some(progress.downloaded / frac);
+                        }
+                    }
+                }
+            }
         }
         if let Some(s) = p.speed {
             progress.speed = s;
@@ -823,6 +839,83 @@ pub async fn start_torrent(
         super::ytdlp::validate_magnet(magnet).map_err(|e| e.to_string())?;
     }
     let daemon = ensure_aria2(&app).await?;
+
+    // Duplicate detection: a torrent with the same info-hash may already
+    // live in the daemon (paused awaiting file selection, active, or a
+    // dead stop that would make addTorrent fail with "already registered").
+    let incoming_hash = match &source {
+        TorrentSource::Magnet(magnet) => super::torrent::magnet_info_hash(magnet),
+        TorrentSource::TorrentBase64(b64) => {
+            use base64::Engine as _;
+            let raw = base64::engine::general_purpose::STANDARD
+                .decode(b64)
+                .map_err(|e| format!("bad torrent payload: {e}"))?;
+            super::torrent::info_hash(&raw).map(|h| hex_encode(&h[..]))
+        }
+    };
+
+    if let Some(hash) = incoming_hash {
+        match daemon.all_statuses().await {
+            Ok(list) => {
+                let mut dead_dupe: Option<String> = None;
+                for st in &list {
+                    let same = st
+                        .info_hash
+                        .as_deref()
+                        .map(|h| h.eq_ignore_ascii_case(&hash))
+                        .unwrap_or(false);
+                    if !same {
+                        continue;
+                    }
+                    match st.status.as_str() {
+                        "active" => {
+                            return Err("torrentActive".into());
+                        }
+                        "complete" => {
+                            return Err("torrentComplete".into());
+                        }
+                        "error" | "removed" => {
+                            dead_dupe = Some(st.gid.clone());
+                        }
+                        _ => {
+                            // waiting / paused — reuse it: register a job on
+                            // the same gid and let the poller take over.
+                            let mut job = Arc::new(base_job(
+                                format!("torrent:{hash}"),
+                                st.torrent_name().unwrap_or_else(|| "Torrent".into()),
+                                Some(daemon.download_dir.to_string_lossy().to_string()),
+                            ));
+                            if let Some(j) = Arc::get_mut(&mut job) {
+                                j.kind = JobKind::Torrent;
+                            }
+                            emit_state(
+                                &app,
+                                &job.id,
+                                JobStatus::Queued,
+                                Some(job.title.clone()),
+                                None,
+                            );
+                            register_job(&queue, job.clone());
+                            let job_task = job.clone();
+                            let daemon2 = daemon.clone();
+                            let existing_gid = st.gid.clone();
+                            tokio::spawn(async move {
+                                let queue: State<'_, QueueManager> = app.state();
+                                run_aria2_job(app.clone(), &queue, job_task, daemon2, existing_gid)
+                                    .await;
+                            });
+                            return Ok(job.id.clone());
+                        }
+                    }
+                }
+                if let Some(old_gid) = dead_dupe {
+                    let _ = daemon.force_remove(&old_gid).await;
+                }
+            }
+            Err(e) => log::warn!("duplicate scan failed: {e}"),
+        }
+    }
+
     let mut options = json!({});
     if let Some(dir) = folder.as_ref().filter(|d| !d.trim().is_empty()) {
         options["dir"] = json!(dir);
@@ -986,6 +1079,18 @@ async fn run_aria2_job(
             }
             "complete" => {
                 set_status(&app, &job, JobStatus::Completed, None).await;
+                // aria2 removes its control file on clean completion, but a
+                // killed daemon can leave a stale `<file>.aria2` behind.
+                if let Some(f) = status.files.first() {
+                    let control = format!("{}.aria2", f.path);
+                    match std::fs::remove_file(&control) {
+                        Ok(_) => log::info!("removed stale control file {control}"),
+                        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                            log::warn!("could not remove control file {control}: {e}")
+                        }
+                        _ => {}
+                    }
+                }
                 record_history(&app, &job, JobStatus::Completed, status.total() as i64).await;
                 break;
             }

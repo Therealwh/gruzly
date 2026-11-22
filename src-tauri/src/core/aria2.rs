@@ -52,6 +52,11 @@ impl Aria2Daemon {
             format!("--rpc-listen-port={port}"),
             format!("--dir={}", download_dir.to_string_lossy()),
             "--continue".into(),
+            // A finished/aborted file without its control file cannot be
+            // resumed; overwrite instead of aborting with "control file
+            // does not exist".
+            "--allow-overwrite=true".into(),
+            "--auto-file-renaming=false".into(),
             "--file-allocation=none".into(),
             "--max-connection-per-server=16".into(),
             "--split=16".into(),

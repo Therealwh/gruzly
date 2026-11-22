@@ -522,10 +522,11 @@ pub fn download_args(
         args.push("--audio-quality".into());
         args.push("0".into());
     } else {
-        let selector = spec
-            .format_selector
-            .clone()
-            .unwrap_or_else(|| "bv*+ba/b".into());
+        // Prefer direct HTTP formats: the native HLS/DASH downloaders emit
+        // no progress-template events, which would leave the UI at "0 KB".
+        let selector = spec.format_selector.clone().unwrap_or_else(|| {
+            "bv*[protocol!~=m3u8]+ba[protocol!~=m3u8]/b[protocol!~=m3u8]/bv*+ba/b".into()
+        });
         args.push("-f".into());
         args.push(selector);
         args.push("--merge-output-format".into());

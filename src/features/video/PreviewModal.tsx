@@ -18,10 +18,13 @@ import { proxyUrl, useSettingsStore } from "@/stores/settings";
 
 type Preset = "best" | "f1080" | "f720" | "audio";
 
+// Avoid HLS (m3u8) formats where possible: the native fragment downloader
+// emits no progress events, which would freeze the UI at "0 KB".
+const NO_M3U8 = "[protocol!~=m3u8]";
 const PRESET_SELECTOR: Record<Exclude<Preset, "audio">, string> = {
-  best: "bv*+ba/b",
-  f1080: "bv*[height<=1080]+ba/b",
-  f720: "bv*[height<=720]+ba/b",
+  best: `bv*${NO_M3U8}+ba${NO_M3U8}/b${NO_M3U8}/bv*+ba/b`,
+  f1080: `bv*[height<=1080]${NO_M3U8}+ba${NO_M3U8}/b[height<=1080]${NO_M3U8}/bv*[height<=1080]+ba/b`,
+  f720: `bv*[height<=720]${NO_M3U8}+ba${NO_M3U8}/b[height<=720]${NO_M3U8}/bv*[height<=720]+ba/b`,
 };
 
 export function PreviewModal({ open, onClose }: { open: boolean; onClose: () => void }) {

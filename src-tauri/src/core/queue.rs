@@ -298,6 +298,14 @@ async fn set_status(app: &AppHandle, job: &Job, status: JobStatus, error: Option
     );
 }
 
+/// Throttled live status line to the UI (used by stdout notes and stderr).
+fn emit_activity(app: &AppHandle, id: &str, text: &str) {
+    let _ = app.emit(
+        EVENT_ACTIVITY,
+        serde_json::json!({ "id": id, "text": text }),
+    );
+}
+
 async fn on_progress(app: &AppHandle, job: &Job, p: YtdlpProgress) {
     let mut transitioning_to_merge = false;
     {
@@ -668,6 +676,10 @@ async fn run_video_job(
                             if let Ok(p) = serde_json::from_str::<YtdlpProgress>(&l) {
                                 on_progress(&app, &job, p).await;
                             }
+                        } else if !l.trim().is_empty() {
+                            // Non-JSON lines (fragment notes, destinations)
+                            // keep the UI alive for HLS-only downloads.
+                            emit_activity(&app, &job.id, &l);
                         }
                     }
                     Ok(None) | Err(_) => break,

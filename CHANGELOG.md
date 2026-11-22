@@ -3,6 +3,19 @@
 All notable changes to Gruzly are documented here. Format: Keep a Changelog,
 versioning: SemVer.
 
+## [0.1.9] — 2026-11-23
+
+### Fixed
+- YouTube/HLS downloads showed "0 KB" forever while files grew: the native
+  m3u8/DASH downloader emits no progress-template events. Format selection
+  now prefers direct HTTP formats (verified: 559 progress events vs 0) and
+  falls back to HLS only when nothing else exists — in that case the task
+  row streams the engine's own status lines instead of freezing.
+- Torrent re-downloads over an existing file aborted with "control file
+  does not exist": the daemon now runs with --allow-overwrite=true and
+  --auto-file-renaming=false (known aria2 behavior, issue #1542).
+- Non-JSON engine output streams into the task row as live activity.
+
 ## [0.1.8] — 2026-11-22
 
 ### Fixed

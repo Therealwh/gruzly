@@ -132,13 +132,28 @@ fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Display rank of a job: its position in the queue order. Unknown ids go last.
+async fn rank_of(queue: &QueueManager, id: &str) -> usize {
+    queue
+        .order
+        .lock()
+        .await
+        .iter()
+        .position(|x| x == id)
+        .unwrap_or(usize::MAX)
+}
+
 fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
-/// Resizable parallelism gate (tokio Semaphore cannot resize).
+/// Resizable parallelism gate (tokio Semaphore cannot resize) that grants
+/// slots in display-order: the queued job with the smallest pending rank
+/// starts next, so drag-and-drop priorities control launch order.
 pub struct Gate {
     slots: Mutex<u32>,
+    pending: Mutex<Vec<(u64, usize)>>, // (token, rank)
+    next_token: std::sync::atomic::AtomicU64,
     notify: Notify,
 }
 
@@ -146,22 +161,42 @@ impl Gate {
     fn new(initial: u32) -> Self {
         Self {
             slots: Mutex::new(initial.max(1)),
+            pending: Mutex::new(Vec::new()),
+            next_token: std::sync::atomic::AtomicU64::new(0),
             notify: Notify::new(),
         }
     }
 
-    async fn acquire(&self) {
+    /// Registers a waiting job and returns its ticket token.
+    async fn register(&self, rank: usize) -> u64 {
+        let token = self
+            .next_token
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.pending.lock().await.push((token, rank));
+        self.notify.notify_one();
+        token
+    }
+
+    /// Blocks until a slot is granted to this token (lowest rank first).
+    async fn acquire(&self, token: u64, rank: usize) {
         loop {
             let granted = {
-                let mut slots = self.slots.lock().await;
-                if *slots > 0 {
-                    *slots -= 1;
-                    true
-                } else {
-                    false
-                }
+                let slots = self.slots.lock().await;
+                let pending = self.pending.lock().await;
+                *slots > 0
+                    && pending
+                        .iter()
+                        .min_by_key(|(_t, r)| *r)
+                        .map(|(t, _)| *t == token)
+                        .unwrap_or(false)
             };
             if granted {
+                {
+                    let mut slots = self.slots.lock().await;
+                    *slots -= 1;
+                }
+                self.pending.lock().await.retain(|(t, _)| *t != token);
+                self.notify.notify_one(); // re-evaluate ranks after reorder
                 return;
             }
             self.notify.notified().await;
@@ -182,20 +217,22 @@ impl Gate {
     }
 }
 
+/// Held for the duration of a running job; releases its slot on drop.
+pub struct GateGuard {
+    gate: Arc<Gate>,
+}
+
 impl Drop for GateGuard {
     fn drop(&mut self) {
         self.gate.release();
     }
 }
 
-/// Held for the duration of a running job; releases its slot on drop.
-pub struct GateGuard {
-    gate: Arc<Gate>,
-}
-
 impl GateGuard {
-    async fn acquire(gate: Arc<Gate>) -> Self {
-        gate.acquire().await;
+    /// Registers with the job's display rank, waits for a slot in order.
+    async fn acquire_rank(gate: Arc<Gate>, rank: usize) -> Self {
+        let token = gate.register(rank).await;
+        gate.acquire(token, rank).await;
         Self { gate }
     }
 }
@@ -396,9 +433,12 @@ pub async fn start_video(
 
     emit_state(&app, &id, JobStatus::Queued, Some(title.clone()), None);
 
+    let rank = rank_of(&queue, &job.id).await;
+
     tokio::spawn(async move {
         let queue: State<'_, QueueManager> = app.state();
-        run_video_job(app.clone(), &queue, job, binary, args).await;
+
+        run_video_job(app.clone(), &queue, job, binary, args, rank).await;
     });
 
     Ok(id)
@@ -456,9 +496,10 @@ pub async fn resume_job(
     let args = ytdlp::download_args(&spec, ffmpeg.as_ref()).map_err(|e| e.to_string())?;
 
     set_status(&app, &job, JobStatus::Queued, None).await;
+    let rank = rank_of(&queue, &job.id).await;
     tokio::spawn(async move {
         let queue: State<'_, QueueManager> = app.state();
-        run_video_job(app.clone(), &queue, job, binary, args).await;
+        run_video_job(app.clone(), &queue, job, binary, args, rank).await;
     });
     Ok(())
 }
@@ -523,8 +564,9 @@ async fn run_video_job(
     job: Arc<Job>,
     binary: PathBuf,
     args: Vec<String>,
+    rank: usize,
 ) {
-    let _guard = GateGuard::acquire(queue.gate.clone()).await;
+    let _guard = GateGuard::acquire_rank(queue.gate.clone(), rank).await;
     if job.status.lock().await.0 == JobStatus::Canceled {
         return;
     }
@@ -662,6 +704,57 @@ async fn run_video_job(
             record_history(&app, &job, JobStatus::Failed, 0).await;
         }
     }
+}
+
+/// Applies a new display order (drag-and-drop in the queue). Unknown ids
+/// are appended so nothing is lost; aria2 waiting/paused tasks are moved to
+/// matching positions via changePosition.
+pub async fn set_job_order(
+    app: AppHandle,
+    queue: State<'_, QueueManager>,
+    ids: Vec<String>,
+) -> Result<(), String> {
+    let jobs = queue.jobs.lock().await;
+    let mut order = queue.order.lock().await;
+
+    // Sort: ids first (in the given order), then everything not mentioned.
+    let mut next: Vec<String> = Vec::with_capacity(order.len());
+    for id in &ids {
+        if jobs.contains_key(id) && !next.contains(id) {
+            next.push(id.clone());
+        }
+    }
+    for id in order.iter() {
+        if !next.contains(id) {
+            next.push(id.clone());
+        }
+    }
+    *order = next;
+    drop(order);
+    drop(jobs);
+
+    // Push matching positions into aria2 for waiting tasks.
+    let daemon = match ensure_aria2(&app).await {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("reorder: aria2 unavailable: {e}");
+            return Ok(());
+        }
+    };
+    let jobs = queue.jobs.lock().await;
+    let order = queue.order.lock().await;
+    let mut pos = 1usize;
+    for id in order.iter() {
+        if let Some(job) = jobs.get(id) {
+            if job.engine == "aria2" {
+                if let Some(gid) = job.gid.lock().await.clone() {
+                    let _ = daemon.change_position(&gid, pos).await;
+                }
+            }
+            pos += 1;
+        }
+    }
+    Ok(())
 }
 
 /// Updates yt-dlp via its self-updater (`--update`).
@@ -822,9 +915,10 @@ pub async fn start_file(
     register_job(&queue, job.clone());
 
     let job_task = job.clone();
+    let rank = rank_of(&queue, &job.id).await;
     tokio::spawn(async move {
         let queue: State<'_, QueueManager> = app.state();
-        run_aria2_job(app.clone(), &queue, job_task, daemon, gid).await;
+        run_aria2_job(app.clone(), &queue, job_task, daemon, gid, rank).await;
     });
     Ok(job.id.clone())
 }
@@ -901,10 +995,18 @@ pub async fn start_torrent(
                             let job_task = job.clone();
                             let daemon2 = daemon.clone();
                             let existing_gid = st.gid.clone();
+                            let rank = rank_of(&queue, &job.id).await;
                             tokio::spawn(async move {
                                 let queue: State<'_, QueueManager> = app.state();
-                                run_aria2_job(app.clone(), &queue, job_task, daemon2, existing_gid)
-                                    .await;
+                                run_aria2_job(
+                                    app.clone(),
+                                    &queue,
+                                    job_task,
+                                    daemon2,
+                                    existing_gid,
+                                    rank,
+                                )
+                                .await;
                             });
                             return Ok(job.id.clone());
                         }
@@ -965,9 +1067,10 @@ pub async fn start_torrent(
     register_job(&queue, job.clone());
 
     let job_task = job.clone();
+    let rank = rank_of(&queue, &job.id).await;
     tokio::spawn(async move {
         let queue: State<'_, QueueManager> = app.state();
-        run_aria2_job(app.clone(), &queue, job_task, daemon, gid).await;
+        run_aria2_job(app.clone(), &queue, job_task, daemon, gid, rank).await;
     });
     Ok(job.id.clone())
 }
@@ -979,9 +1082,10 @@ async fn run_aria2_job(
     job: Arc<Job>,
     daemon: Arc<Aria2Daemon>,
     gid: String,
+    rank: usize,
 ) {
     *job.gid.lock().await = Some(gid.clone());
-    let _guard = GateGuard::acquire(queue.gate.clone()).await;
+    let _guard = GateGuard::acquire_rank(queue.gate.clone(), rank).await;
     let mut metadata_announced = false;
     let mut last_emit: Option<Instant> = None;
     let mut consecutive_errors = 0u32;
@@ -1297,9 +1401,10 @@ pub async fn resume_all_jobs(app: AppHandle, queue: State<'_, QueueManager>) -> 
                 if let (Some(binary), Some(spec)) = (binary, job.spec.clone()) {
                     if let Ok(args) = ytdlp::download_args(&spec, ffmpeg.as_ref()) {
                         set_status(&app, &job, JobStatus::Queued, None).await;
+                        let rank = rank_of(&queue, &job.id).await;
                         tokio::spawn(async move {
                             let queue: State<'_, QueueManager> = app.state();
-                            run_video_job(app.clone(), &queue, job, binary, args).await;
+                            run_video_job(app.clone(), &queue, job, binary, args, rank).await;
                         });
                         resumed += 1;
                     }

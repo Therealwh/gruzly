@@ -98,6 +98,7 @@ pub fn run() {
             commands::update_ytdlp,
             commands::set_parallel,
             commands::set_speed_limit,
+            commands::set_job_order,
             commands::set_close_to_tray,
             commands::set_tray_language,
         ])

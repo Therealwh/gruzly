@@ -214,6 +214,10 @@ export async function setSpeedLimit(limit: string): Promise<void> {
   return call<void>("set_speed_limit", { limit });
 }
 
+export async function setJobOrder(ids: string[]): Promise<void> {
+  return call<void>("set_job_order", { ids });
+}
+
 export async function setCloseToTray(enabled: boolean): Promise<void> {
   return call<void>("set_close_to_tray", { enabled });
 }

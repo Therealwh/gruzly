@@ -216,6 +216,17 @@ pub async fn set_parallel(queue: State<'_, QueueManager>, n: u32) -> CmdResult<(
 }
 
 #[tauri::command]
+pub async fn set_job_order(
+    app: tauri::AppHandle,
+    queue: State<'_, QueueManager>,
+    ids: Vec<String>,
+) -> CmdResult<()> {
+    queue::set_job_order(app, queue, ids)
+        .await
+        .map_err(|e| CommandError::of("reorder", e))
+}
+
+#[tauri::command]
 pub async fn set_close_to_tray(state: State<'_, AppState>, enabled: bool) -> CmdResult<()> {
     state
         .close_to_tray

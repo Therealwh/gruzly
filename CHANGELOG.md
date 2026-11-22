@@ -3,6 +3,13 @@
 All notable changes to Gruzly are documented here. Format: Keep a Changelog,
 versioning: SemVer.
 
+## [0.1.6] — 2026-11-22
+
+### Added
+- Drag-and-drop queue priorities: reorder tasks in Downloads and the gate
+  grants slots in that order; aria2 waiting tasks are repositioned via
+  changePosition so the real download order follows the UI.
+
 ## [0.1.5] — 2026-11-22
 
 ### Fixed

@@ -3,6 +3,7 @@ import { create } from "zustand";
 import {
   isTauri,
   listJobs,
+  setJobOrder,
   type JobView,
   type ProgressEvent,
   type StateEvent,
@@ -20,6 +21,8 @@ type QueueState = {
   applyState: (e: StateEvent) => void;
   applyTorrentReady: (e: TorrentReadyEvent) => void;
   dismissTorrent: () => void;
+  /** Applies a drag-and-drop reordering (ids in their new display order). */
+  applyOrder: (ids: string[]) => void;
   attach: () => Promise<() => void>;
 };
 
@@ -130,6 +133,16 @@ export const useQueueStore = create<QueueState>((set, get) => ({
   },
 
   dismissTorrent: () => set({ torrentReady: null }),
+
+  applyOrder: (ids) => {
+    const { jobs, order } = get();
+    const next = [
+      ...ids.filter((id) => jobs.has(id)),
+      ...order.filter((id) => !ids.includes(id)),
+    ];
+    set({ order: next });
+    void setJobOrder(next).catch(() => undefined);
+  },
 
   attach: async () => {
     // detach previous listeners first (StrictMode double-mount safe)

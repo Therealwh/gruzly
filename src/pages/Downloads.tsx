@@ -84,12 +84,27 @@ export function Downloads() {
 
 function VirtualJobList({ jobs }: { jobs: JobView[] }) {
   const parentRef = useRef<HTMLDivElement>(null);
+  const dragId = useRef<string | null>(null);
+  const [dragging, setDragging] = useState<string | null>(null);
+  const applyOrder = useQueueStore((s) => s.applyOrder);
   const virtualizer = useVirtualizer({
     count: jobs.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 68,
     overscan: 8,
   });
+
+  const moveJob = (id: string, overId: string) => {
+    if (id === overId) return;
+    const ids = jobs.map((j) => j.id);
+    const from = ids.indexOf(id);
+    const to = ids.indexOf(overId);
+    if (from < 0 || to < 0) return;
+    const [moved] = ids.splice(from, 1);
+    if (moved === undefined) return;
+    ids.splice(to, 0, moved);
+    applyOrder(ids);
+  };
 
   return (
     <div ref={parentRef} className="h-full">
@@ -102,6 +117,21 @@ function VirtualJobList({ jobs }: { jobs: JobView[] }) {
               key={job.id}
               data-index={vi.index}
               ref={virtualizer.measureElement}
+              draggable
+              onDragStart={() => {
+                dragId.current = job.id;
+                setDragging(job.id);
+              }}
+              onDragEnd={() => {
+                dragId.current = null;
+                setDragging(null);
+              }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (dragId.current && dragId.current !== job.id) {
+                  moveJob(dragId.current, job.id);
+                }
+              }}
               style={{
                 position: "absolute",
                 top: 0,
@@ -109,6 +139,8 @@ function VirtualJobList({ jobs }: { jobs: JobView[] }) {
                 width: "100%",
                 transform: `translateY(${vi.start}px)`,
                 paddingBottom: 8,
+                opacity: dragging === job.id ? 0.5 : 1,
+                cursor: "grab",
               }}
             >
               <JobRow job={job} />

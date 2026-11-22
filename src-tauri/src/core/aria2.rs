@@ -280,6 +280,13 @@ impl Aria2Daemon {
             .map(|_| ())
     }
 
+    /// Moves a waiting/paused task to a 1-based position in aria2's queue.
+    pub async fn change_position(&self, gid: &str, pos: usize) -> Result<(), Aria2Error> {
+        self.rpc("changePosition", self.authed(json!([gid, pos, "pos"])))
+            .await
+            .map(|_| ())
+    }
+
     pub async fn force_remove(&self, gid: &str) -> Result<(), Aria2Error> {
         self.rpc("forceRemove", self.authed(json!([gid])))
             .await

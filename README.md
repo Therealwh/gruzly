@@ -49,7 +49,9 @@ Grab the latest installer or portable zip from
 | `*.dmg` / `*.deb` / `*.AppImage` | macOS / Linux (from CI) |
 
 Windows 10+ with WebView2 (auto-installed if missing). Engines (yt-dlp, aria2, ffmpeg)
-are bundled — no external dependencies.
+are bundled — no external dependencies. On Linux the deb package pulls `aria2` from
+system repositories automatically; AppImage users need `aria2` installed for torrents
+(`sudo apt install aria2`).
 
 ## Build from source
 

@@ -2,7 +2,7 @@
 // distribution points over HTTPS into src-tauri/binaries/ using the
 // Tauri sidecar naming convention: <name>-<target-triple>[.exe].
 // Idempotent: skips engines that are already present.
-import { copyFileSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
+import { copyFileSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
@@ -78,7 +78,9 @@ async function fetchEngine(name, spec, outFile) {
   const entry = entries[0];
   if (typeof entry === "object" && entry.system) {
     // Fall back to the system binary (CI installs it via brew/apt).
-    // Pure copy: never move or delete anything outside our own dir.
+    // On Linux the preinstalled aria2 may be a snap wrapper that dies
+    // outside its sandbox — ship a tiny exec shim instead and declare
+    // aria2 as a package dependency (deb) so users get a real binary.
     const found = execFileSync(
       process.platform === "win32" ? "where" : "which",
       [entry.system],
@@ -90,7 +92,13 @@ async function fetchEngine(name, spec, outFile) {
     console.log(`[system] ${name} ← ${found}`);
     rmSync(outFile, { force: true });
     mkdirSync(dirname(outFile), { recursive: true });
-    copyFileSync(found, outFile);
+    if (process.platform === "linux" && entry.system === "aria2c") {
+      // exec-shim: resolve the real system binary at runtime
+      const shim = ["#!/bin/sh", 'exec /usr/bin/aria2c "$@"', ""].join("\n");
+      writeFileSync(outFile, shim, { mode: 0o755 });
+    } else {
+      copyFileSync(found, outFile);
+    }
     if (!existsSync(outFile)) throw new Error(`copy failed: ${found} → ${outFile}`);
     return true;
   }
@@ -174,7 +182,8 @@ for (const [name, state] of Object.entries(results)) {
       throw new Error(`post-check failed: ${name} missing at ${outFile}`);
     }
     const size = statSync(outFile).size;
-    if (size < 100_000) {
+    const minSize = process.platform === "linux" && name === "aria2c" ? 30 : 100_000;
+    if (size < minSize) {
       throw new Error(`post-check failed: ${name} suspiciously small (${size} bytes)`);
     }
   }

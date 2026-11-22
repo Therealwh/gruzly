@@ -14,6 +14,7 @@ import { History } from "@/pages/History";
 import { Presets } from "@/pages/Presets";
 import { Settings } from "@/pages/Settings";
 import { Video } from "@/pages/Video";
+import { useQueueStore } from "@/stores/queue";
 import { bootstrapUi } from "@/stores/ui";
 
 const PAGE_STORAGE_KEY = "gruzly.page";
@@ -40,6 +41,15 @@ export default function App() {
   };
 
   useGlobalHotkeys(navigate);
+
+  // Attach Rust event listeners once (StrictMode double-mount safe).
+  const attach = useQueueStore((s) => s.attach);
+  useEffect(() => {
+    const detachPromise = attach();
+    return () => {
+      void detachPromise.then((detach) => detach());
+    };
+  }, [attach]);
 
   useEffect(() => {
     document.title = `${t("app.name")} — ${t(`nav.${page}`)}`;

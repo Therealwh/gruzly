@@ -39,6 +39,36 @@ struct EngineSpec {
     parse: fn(&str) -> Option<String>,
 }
 
+/// Tauri sidecar triple, e.g. `yt-dlp-x86_64-pc-windows-msvc.exe`.
+fn sidecar_triple() -> &'static str {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("windows", "x86_64") => "x86_64-pc-windows-msvc",
+        ("windows", "aarch64") => "aarch64-pc-windows-msvc",
+        ("macos", "x86_64") => "x86_64-apple-darwin",
+        ("macos", "aarch64") => "aarch64-apple-darwin",
+        ("linux", "x86_64") => "x86_64-unknown-linux-gnu",
+        ("linux", "aarch64") => "aarch64-unknown-linux-gnu",
+        _ => "unknown",
+    }
+}
+
+fn exe_suffix() -> &'static str {
+    if std::env::consts::OS == "windows" {
+        ".exe"
+    } else {
+        ""
+    }
+}
+
+/// All filenames under which a bundled engine may appear.
+fn engine_file_names(spec: &EngineSpec) -> Vec<String> {
+    let mut names: Vec<String> = spec.exe_names.iter().map(|n| n.to_string()).collect();
+    let triple = sidecar_triple();
+    names.push(format!("{}-{}{}", spec.id, triple, exe_suffix()));
+    names.push(format!("{}{}", spec.id, exe_suffix()));
+    names
+}
+
 fn parse_first_token_version(prefix: &str) -> impl Fn(&str) -> Option<String> + '_ {
     move |out: &str| {
         out.lines()
@@ -111,6 +141,8 @@ fn candidate_dirs(app: &tauri::AppHandle) -> Vec<PathBuf> {
     {
         dirs.push(resource_root);
     }
+    // dev: sidecars fetched by scripts/fetch-engines.mjs live in the manifest dir
+    dirs.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries"));
     dirs
 }
 
@@ -121,11 +153,24 @@ fn path_dirs() -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
-fn find_binary(dir: &PathBuf, names: &[&str]) -> Option<PathBuf> {
+fn find_binary(dir: &PathBuf, names: &[String]) -> Option<PathBuf> {
     for name in names {
         let candidate = dir.join(name);
         if candidate.is_file() {
             return Some(candidate);
+        }
+    }
+    None
+}
+
+/// Resolves an engine binary path by id ("yt-dlp" | "aria2" | "ffmpeg").
+/// Checks bundled locations first, then PATH.
+pub fn find_engine(app: &tauri::AppHandle, id: &str) -> Option<PathBuf> {
+    let spec = SPECS.iter().find(|s| s.id == id)?;
+    let names = engine_file_names(spec);
+    for dir in candidate_dirs(app).into_iter().chain(path_dirs()) {
+        if let Some(path) = find_binary(&dir, &names) {
+            return Some(path);
         }
     }
     None
@@ -181,9 +226,10 @@ pub fn probe_all(app: &tauri::AppHandle) -> Vec<EngineInfo> {
     SPECS
         .iter()
         .map(|spec| {
+            let names = engine_file_names(spec);
             // 1. bundled
             for dir in &bundle_dirs {
-                if let Some(binary) = find_binary(dir, spec.exe_names) {
+                if let Some(binary) = find_binary(dir, &names) {
                     if let Ok(out) = probe_version(&binary, spec.version_args) {
                         if let Some(v) = (spec.parse)(&out) {
                             return EngineInfo {
@@ -198,7 +244,7 @@ pub fn probe_all(app: &tauri::AppHandle) -> Vec<EngineInfo> {
             }
             // 2. PATH
             for dir in &sys_dirs {
-                if let Some(binary) = find_binary(dir, spec.exe_names) {
+                if let Some(binary) = find_binary(dir, &names) {
                     if let Ok(out) = probe_version(&binary, spec.version_args) {
                         if let Some(v) = (spec.parse)(&out) {
                             return EngineInfo {

@@ -2,16 +2,19 @@ import { ArrowRight, Cpu, Download, Gauge, Link2, Search } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Badge, Button, EmptyState, Input, InputIcon, StatusDot, toast } from "@/components/ui";
+import { JobRow } from "@/features/queue/JobRow";
 import { getEngineInfo, type EngineInfo } from "@/lib/api";
 import { parseUrlKind } from "@/lib/urls";
 import type { PageId } from "@/lib/navigation";
 import { useAnalysisStore } from "@/stores/analysis";
+import { useQueueStore } from "@/stores/queue";
 
 type Props = { onNavigate: (p: PageId) => void };
 
 export function Dashboard({ onNavigate }: Props) {
   const { t } = useTranslation();
   const setPendingUrl = useAnalysisStore((s) => s.setPendingUrl);
+  const { jobs, order, hydrate } = useQueueStore();
   const [url, setUrl] = useState("");
   const [engines, setEngines] = useState<EngineInfo[] | null>(null);
 
@@ -19,7 +22,13 @@ export function Dashboard({ onNavigate }: Props) {
     void getEngineInfo()
       .then(setEngines)
       .catch(() => setEngines([]));
-  }, []);
+    void hydrate();
+  }, [hydrate]);
+
+  const activeJobs = order
+    .map((id) => jobs.get(id))
+    .filter((j) => j && ["downloading", "merging", "queued", "paused"].includes(j.status))
+    .slice(0, 3);
 
   const submit = useCallback(() => {
     const kind = parseUrlKind(url);
@@ -83,7 +92,7 @@ export function Dashboard({ onNavigate }: Props) {
       {/* Stats row */}
       <section className="mt-5 grid grid-cols-3 gap-3" aria-label={t("dashboard.stats.today")}>
         <StatCard icon={Download} label={t("dashboard.stats.downloaded")} value="—" hint={t("dashboard.stats.noData")} />
-        <StatCard icon={Gauge} label={t("dashboard.stats.activeJobs")} value="0" />
+        <StatCard icon={Gauge} label={t("dashboard.stats.activeJobs")} value={String(activeJobs.length)} />
         <StatCard icon={Cpu} label={t("dashboard.stats.averageSpeed")} value="—" />
       </section>
 
@@ -119,17 +128,31 @@ export function Dashboard({ onNavigate }: Props) {
           className="rounded-2xl border border-border glass p-4 shadow-panel lg:col-span-2"
           aria-label={t("dashboard.activeTasks.title")}
         >
-          <div className="mb-1 flex items-center justify-between">
+          <div className="mb-2 flex items-center justify-between">
             <h2 className="text-xs font-semibold text-text">{t("dashboard.activeTasks.title")}</h2>
+            {activeJobs.length > 0 && (
+              <Button size="sm" variant="ghost" onClick={() => onNavigate("downloads")}>
+                {t("dashboard.activeTasks.seeAll")}
+                <ArrowRight className="h-3 w-3" aria-hidden />
+              </Button>
+            )}
           </div>
-          <EmptyState
-            icon={Download}
-            title={t("dashboard.activeTasks.empty")}
-            hint={t("dashboard.activeTasks.emptyHint")}
-            className="py-8"
-            actionLabel={t("dashboard.activeTasks.seeAll")}
-            onAction={() => onNavigate("downloads")}
-          />
+          {activeJobs.length === 0 ? (
+            <EmptyState
+              icon={Download}
+              title={t("dashboard.activeTasks.empty")}
+              hint={t("dashboard.activeTasks.emptyHint")}
+              className="py-7"
+              actionLabel={t("dashboard.activeTasks.seeAll")}
+              onAction={() => onNavigate("downloads")}
+            />
+          ) : (
+            <div className="flex flex-col gap-2">
+              {activeJobs.map((j) =>
+                j ? <JobRow key={j.id} job={j} compact /> : null,
+              )}
+            </div>
+          )}
         </section>
       </div>
     </div>

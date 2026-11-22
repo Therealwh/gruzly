@@ -155,8 +155,8 @@
       "download": "Download",
       "queue": "Add to queue",
       "cancel": "Cancel",
-      "views": "{{count}} view",
-      "views_plural": "{{count}} views",
+      "views_one": "{{formattedCount}} view",
+      "views_other": "{{formattedCount}} views",
       "formats": {
         "title": "Formats",
         "quality": "Quality",

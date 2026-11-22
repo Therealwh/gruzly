@@ -3,6 +3,22 @@
 All notable changes to Gruzly are documented here. Format: Keep a Changelog,
 versioning: SemVer.
 
+## [0.1.8] — 2026-11-22
+
+### Fixed
+- Torrent downloads from magnet links stalled after metadata: aria2 moves
+  the real download to a new task (followedBy) and the queue settled the
+  job early — now the queue follows the chain, so data actually downloads.
+- Progress could silently read as "0 KB, no bar": the yt-dlp progress
+  parser expected camelCase keys while yt-dlp emits snake_case
+  (regression tests added).
+
+### Added
+- Queue persistence: unfinished video downloads are saved to SQLite and
+  restored as paused tasks after an app restart — press Resume to continue.
+- Torrent end-to-end test against a real daemon and public torrent
+  (metadata → file selection → unpause → data).
+
 ## [0.1.7] — 2026-11-22
 
 ### Fixed

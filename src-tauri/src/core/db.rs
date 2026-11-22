@@ -24,6 +24,18 @@ pub struct HistoryRecord {
     pub finished_at: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingJob {
+    pub id: String,
+    pub kind: String,
+    pub url: String,
+    pub title: String,
+    pub folder: Option<String>,
+    pub spec_json: String,
+    pub created_at: i64,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
     #[error("db error: {0}")]
@@ -57,11 +69,70 @@ impl Db {
                 created_at  INTEGER NOT NULL,
                 finished_at INTEGER NOT NULL
              );
-             CREATE INDEX IF NOT EXISTS idx_history_created ON history(created_at DESC);",
+             CREATE INDEX IF NOT EXISTS idx_history_created ON history(created_at DESC);
+             CREATE TABLE IF NOT EXISTS pending_queue (
+                id         TEXT PRIMARY KEY,
+                kind       TEXT NOT NULL,
+                url        TEXT NOT NULL,
+                title      TEXT NOT NULL,
+                folder     TEXT,
+                spec_json  TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+             );",
         )?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
+    }
+
+    /// Persists an unfinished video job for restore-after-restart.
+    pub fn save_pending(&self, rec: &PendingJob) -> Result<(), DbError> {
+        let conn = self.conn.lock().expect("db lock");
+        conn.execute(
+            "INSERT OR REPLACE INTO pending_queue
+             (id, kind, url, title, folder, spec_json, created_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            rusqlite::params![
+                rec.id,
+                rec.kind,
+                rec.url,
+                rec.title,
+                rec.folder,
+                rec.spec_json,
+                rec.created_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_pending(&self) -> Result<Vec<PendingJob>, DbError> {
+        let conn = self.conn.lock().expect("db lock");
+        let mut stmt = conn.prepare(
+            "SELECT id, kind, url, title, folder, spec_json, created_at
+             FROM pending_queue ORDER BY created_at",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(PendingJob {
+                id: row.get(0)?,
+                kind: row.get(1)?,
+                url: row.get(2)?,
+                title: row.get(3)?,
+                folder: row.get(4)?,
+                spec_json: row.get(5)?,
+                created_at: row.get(6)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    pub fn delete_pending(&self, id: &str) -> Result<(), DbError> {
+        let conn = self.conn.lock().expect("db lock");
+        conn.execute("DELETE FROM pending_queue WHERE id = ?1", [id])?;
+        Ok(())
     }
 
     pub fn insert_history(&self, rec: &HistoryRecord) -> Result<(), DbError> {
@@ -176,6 +247,35 @@ mod tests {
 
         let matched = db.list_history("beta", "all", None, 100).unwrap();
         assert_eq!(matched.len(), 1);
+    }
+
+    fn pending(id: &str) -> PendingJob {
+        PendingJob {
+            id: id.into(),
+            kind: "video".into(),
+            url: "https://youtu.be/x".into(),
+            title: "Test video".into(),
+            folder: Some("D:/DL".into()),
+            spec_json: r#"{"url":"https://youtu.be/x","audioOnly":false,"subtitles":[]}"#.into(),
+            created_at: 42,
+        }
+    }
+
+    #[test]
+    fn pending_queue_roundtrip() {
+        let db = temp_db();
+        db.save_pending(&pending("1")).unwrap();
+        db.save_pending(&pending("2")).unwrap();
+
+        let all = db.list_pending().unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].id, "1");
+        assert_eq!(all[1].folder.as_deref(), Some("D:/DL"));
+
+        db.delete_pending("1").unwrap();
+        let rest = db.list_pending().unwrap();
+        assert_eq!(rest.len(), 1);
+        assert_eq!(rest[0].id, "2");
     }
 
     #[test]

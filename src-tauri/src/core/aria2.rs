@@ -218,7 +218,8 @@ impl Aria2Daemon {
                         "files",
                         "bittorrent",
                         "errorMessage",
-                        "infoHash"
+                        "infoHash",
+                        "followedBy"
                     ]
                 ])),
             )
@@ -367,6 +368,10 @@ pub struct Aria2Status {
     pub status: String, // active | waiting | paused | error | complete | removed
     #[serde(default, rename = "infoHash")]
     pub info_hash: Option<String>,
+    /// Magnet flows: after metadata, aria2 transfers the real download to a
+    /// new gid and lists it here.
+    #[serde(default, rename = "followedBy")]
+    pub followed_by: Vec<String>,
     #[serde(default, rename = "totalLength")]
     pub total_length: String,
     #[serde(default, rename = "completedLength")]

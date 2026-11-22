@@ -6,7 +6,7 @@
 //! passed as arrays, never shell strings.
 
 mod commands;
-mod core;
+pub mod core;
 
 use std::sync::Arc;
 
@@ -136,6 +136,16 @@ pub fn run() {
                 });
 
             schedule_ytdlp_auto_update(handle.clone());
+
+            // Restore unfinished downloads as paused tasks.
+            {
+                let handle2 = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+                    let restored = core::queue::restore_pending_jobs(handle2.clone()).await;
+                    log::info!("queue restore: {restored}");
+                });
+            }
 
             // The window starts hidden (no white flash while WebView2 warms
             // up); the frontend shows it when rendered. Safety net: show it

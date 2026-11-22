@@ -455,16 +455,24 @@ pub struct VideoDownloadSpec {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
 pub struct YtdlpProgress {
+    // NOTE: no rename_all — yt-dlp emits snake_case keys in %(progress)j.
+    // A camelCase rename silently made every field None ("0 KB, no bar").
     pub status: Option<String>, // downloading | finished
     pub filename: Option<String>,
+    #[serde(default, rename = "downloaded_bytes", alias = "downloadedBytes")]
     pub downloaded_bytes: Option<f64>,
+    #[serde(default, rename = "total_bytes", alias = "totalBytes")]
     pub total_bytes: Option<f64>,
+    #[serde(default, rename = "total_bytes_estimate", alias = "totalBytesEstimate")]
     pub total_bytes_estimate: Option<f64>,
+    #[serde(default)]
     pub speed: Option<f64>,
+    #[serde(default)]
     pub eta: Option<f64>,
+    #[serde(default, rename = "fragment_index", alias = "fragmentIndex")]
     pub fragment_index: Option<u64>,
+    #[serde(default, rename = "fragment_count", alias = "fragmentCount")]
     pub fragment_count: Option<u64>,
 }
 
@@ -720,6 +728,31 @@ mod tests {
     }
 
     #[test]
+    fn parses_progress_snake_case() {
+        // Regression: yt-dlp emits snake_case keys — a camelCase rename made
+        // every field silently None ("0 KB, no progress bar").
+        let p: YtdlpProgress = serde_json::from_str(
+            r#"{"status":"downloading","downloaded_bytes":15360,"total_bytes":15298808,"speed":100.5,"eta":12,"filename":"x.part"}"#,
+        )
+        .unwrap();
+        assert_eq!(p.status.as_deref(), Some("downloading"));
+        assert_eq!(p.downloaded_bytes, Some(15360.0));
+        assert_eq!(p.total(), Some(15298808.0));
+        assert_eq!(p.speed, Some(100.5));
+        assert_eq!(p.eta, Some(12.0));
+        assert_eq!(p.filename.as_deref(), Some("x.part"));
+    }
+
+    #[test]
+    fn fragment_fields_parse() {
+        let p: YtdlpProgress = serde_json::from_str(
+            r#"{"status":"downloading","fragment_index":3,"fragment_count":40}"#,
+        )
+        .unwrap();
+        assert_eq!(p.fragment_index, Some(3));
+        assert_eq!(p.fragment_count, Some(40));
+    }
+
     fn hdr_detection() {
         let json = r#"{
             "_type": "video", "id": "h", "title": "HDR", "formats": [

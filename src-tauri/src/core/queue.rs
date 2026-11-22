@@ -432,6 +432,23 @@ pub async fn start_video(
     queue.jobs.lock().await.insert(id.clone(), job.clone());
     queue.order.lock().await.push(id.clone());
 
+    // Persist for restore-after-restart (removed on terminal states).
+    {
+        let state: State<'_, crate::AppState> = app.state();
+        let db = state.db.clone();
+        let pending = crate::core::db::PendingJob {
+            id: id.clone(),
+            kind: "video".into(),
+            url: job.url.clone(),
+            title: title.clone(),
+            folder: job.folder.clone(),
+            spec_json: serde_json::to_string(job.spec.as_ref().expect("video job has a spec"))
+                .expect("spec json"),
+            created_at: job.created_at,
+        };
+        let _ = tokio::task::spawn_blocking(move || db.save_pending(&pending)).await;
+    }
+
     emit_state(&app, &id, JobStatus::Queued, Some(title.clone()), None);
 
     let rank = rank_of(&queue, &job.id).await;
@@ -692,6 +709,7 @@ async fn run_video_job(
                     eta: 0.0,
                 },
             );
+            delete_pending(&app, &job.id).await;
             record_history(
                 &app,
                 &job,
@@ -715,6 +733,7 @@ async fn run_video_job(
             };
             set_status(&app, &job, JobStatus::Failed, Some(err)).await;
             record_history(&app, &job, JobStatus::Failed, 0).await;
+            delete_pending(&app, &job.id).await;
         }
         (None, None) => {
             set_status(
@@ -725,6 +744,7 @@ async fn run_video_job(
             )
             .await;
             record_history(&app, &job, JobStatus::Failed, 0).await;
+            delete_pending(&app, &job.id).await;
         }
     }
 }
@@ -778,6 +798,71 @@ pub async fn set_job_order(
         }
     }
     Ok(())
+}
+
+/// Restores unfinished video downloads from the database as PAUSED jobs.
+/// Called once at startup — the user presses Resume to continue.
+pub async fn restore_pending_jobs(app: AppHandle) -> usize {
+    let state: State<'_, crate::AppState> = app.state();
+    let rows = match state.db.list_pending() {
+        Ok(rows) => rows,
+        Err(e) => {
+            log::warn!("could not read pending queue: {e}");
+            return 0;
+        }
+    };
+
+    let binary = engines::find_engine(&app, "yt-dlp");
+    let queue = app.state::<QueueManager>();
+    let mut restored = 0;
+
+    for row in rows {
+        if row.kind != "video" {
+            continue;
+        }
+        let spec: VideoDownloadSpec = match serde_json::from_str(&row.spec_json) {
+            Ok(s) => s,
+            Err(e) => {
+                log::warn!("dropping corrupt pending job {}: {e}", row.id);
+                let _ = state.db.delete_pending(&row.id);
+                continue;
+            }
+        };
+        if binary.is_none() {
+            log::warn!("yt-dlp missing; cannot restore pending job {}", row.id);
+            continue;
+        }
+
+        let job = Arc::new(Job {
+            id: row.id.clone(),
+            kind: JobKind::Video,
+            engine: "yt-dlp".into(),
+            url: row.url.clone(),
+            title: Mutex::new(row.title.clone()),
+            folder: row.folder.clone(),
+            status: Mutex::new((JobStatus::Paused, None)),
+            progress: Mutex::new(Progress::default()),
+            spec: Some(spec),
+            gid: Mutex::new(None),
+            kill: Arc::new(Notify::new()),
+            pause_requested: AtomicBool::new(false),
+            cancel_requested: AtomicBool::new(false),
+            created_at: row.created_at,
+        });
+        register_job(&queue, job.clone());
+        emit_state(
+            &app,
+            &row.id,
+            JobStatus::Paused,
+            Some(row.title.clone()),
+            None,
+        );
+        restored += 1;
+    }
+    if restored > 0 {
+        log::info!("restored {restored} unfinished download(s) as paused");
+    }
+    restored
 }
 
 /// Updates yt-dlp via its self-updater (`--update`).
@@ -1236,6 +1321,14 @@ async fn run_aria2_job(
                 }
             }
             "complete" => {
+                // Magnet flow: the metadata task "completes" and aria2 moves
+                // the real download to a NEW gid (followedBy). Follow the
+                // chain instead of settling the job early.
+                if let Some(next_gid) = status.followed_by.first() {
+                    *job.gid.lock().await = Some(next_gid.clone());
+                    log::info!("torrent metadata done, following {}", next_gid);
+                    continue; // keep polling with the new gid
+                }
                 set_status(&app, &job, JobStatus::Completed, None).await;
                 // aria2 removes its control file on clean completion, but a
                 // killed daemon can leave a stale `<file>.aria2` behind.
@@ -1259,16 +1352,26 @@ async fn run_aria2_job(
                     .unwrap_or_else(|| "aria2 reported an error".into());
                 set_status(&app, &job, JobStatus::Failed, Some(msg)).await;
                 record_history(&app, &job, JobStatus::Failed, status.completed() as i64).await;
+                delete_pending(&app, &job.id).await;
                 break;
             }
             "removed" => {
                 set_status(&app, &job, JobStatus::Canceled, None).await;
+                delete_pending(&app, &job.id).await;
                 break;
             }
             _ => {}
         }
     }
     let _ = queue;
+}
+
+/// Removes a job from the persistent pending queue (non-fatal).
+async fn delete_pending(app: &AppHandle, id: &str) {
+    let state: State<'_, crate::AppState> = app.state();
+    let db = state.db.clone();
+    let id = id.to_string();
+    let _ = tokio::task::spawn_blocking(move || db.delete_pending(&id)).await;
 }
 
 /// Persists a finished job to history (non-fatal on error).

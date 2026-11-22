@@ -1,7 +1,7 @@
 {
   "name": "gruzly",
   "private": true,
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Gruzly — a beautiful cross-platform download manager: files, torrents and video from 1000+ sites",
   "type": "module",
   "scripts": {

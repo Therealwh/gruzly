@@ -753,6 +753,7 @@ mod tests {
         assert_eq!(p.fragment_count, Some(40));
     }
 
+    #[test]
     fn hdr_detection() {
         let json = r#"{
             "_type": "video", "id": "h", "title": "HDR", "formats": [

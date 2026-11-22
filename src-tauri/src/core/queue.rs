@@ -244,6 +244,12 @@ pub struct QueueManager {
     gate: Arc<Gate>,
 }
 
+impl Default for QueueManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl QueueManager {
     pub fn new() -> Self {
         Self {

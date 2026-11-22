@@ -76,7 +76,7 @@ async fn torrent_select_file_e2e() {
         );
         tokio::time::sleep(Duration::from_millis(300)).await;
     };
-    assert!(files.len() >= 1, "expected torrent file entries");
+    assert!(!files.is_empty(), "expected torrent file entries");
     println!(
         "metadata files: {:?}",
         files.iter().map(|f| &f.path).collect::<Vec<_>>()

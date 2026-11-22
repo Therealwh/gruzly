@@ -26,10 +26,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-      - name: Install Linux dependencies (webkit2gtk)
+      - name: Install Linux dependencies (webkit2gtk, aria2 for externalBin)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libudev-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libudev-dev aria2
+      - name: Fetch sidecar engines (tauri-build requires externalBin files)
+        run: npm run engines:fetch
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npx eslint .
@@ -76,7 +78,10 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libudev-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libudev-dev aria2
+      - name: Install macOS dependencies (aria2, ffmpeg)
+        if: runner.os == 'macOS'
+        run: brew install aria2 ffmpeg
       - name: Fetch sidecar engines
         run: npm run engines:fetch
       - run: npm ci

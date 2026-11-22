@@ -41,10 +41,10 @@ const SOURCES = {
         inner: "aria2c.exe",
       },
     ],
-    // macOS/Linux: expected from package managers in CI (brew/apt) —
-    // the probe falls back to PATH there.
-    darwin: [],
-    linux: [],
+    // macOS/Linux: no official prebuilt — install via brew/apt in CI first;
+    // the script copies the system binary into the sidecar location.
+    darwin: [{ system: "aria2c" }],
+    linux: [{ system: "aria2c" }],
   },
   ffmpeg: {
     win32: [
@@ -53,7 +53,7 @@ const SOURCES = {
         inner: "bin/ffmpeg.exe",
       },
     ],
-    darwin: [],
+    darwin: [{ system: "ffmpeg" }],
     linux: [
       {
         url: "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-linux64-gpl.tar.xz",
@@ -76,6 +76,17 @@ async function fetchEngine(name, spec, outFile) {
     return false;
   }
   const entry = entries[0];
+  if (typeof entry === "object" && entry.system) {
+    // Fall back to the system binary (CI installs it via brew/apt).
+    const found = execFileSync(process.platform === "win32" ? "where" : "which", [entry.system], { encoding: "utf8" })
+      .split(/?
+/)[0]
+      ?.trim();
+    if (!found) throw new Error(`system binary ${entry.system} not found — install it first`);
+    console.log(`[system] ${name} ← ${found}`);
+    copyBin(found, outFile);
+    return true;
+  }
   const url = typeof entry === "string" ? entry : entry.url;
   const inner = typeof entry === "string" ? undefined : entry.inner;
   const tmp = mkdtempSync(join(BIN_DIR, `.${name}-`));

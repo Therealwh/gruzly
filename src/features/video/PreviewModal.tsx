@@ -113,7 +113,7 @@ function VideoPreview({
         limitRate: settings.speedLimit || null,
         proxy: proxyUrl(settings),
       };
-      await startVideoDownload(spec, meta.title);
+      await startVideoDownload(spec, meta.title, meta.thumbnail);
       toast.success(t("toasts.downloadStarted"));
       if (!keepOpen) onClose();
     } catch (e) {

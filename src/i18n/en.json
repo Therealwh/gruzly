@@ -243,7 +243,14 @@
     "empty": {
       "title": "History is empty",
       "hint": "Completed downloads will appear here"
-    }
+    },
+    "filterStatus": "Status",
+    "statusAll": "All statuses",
+    "sortNew": "Newest first",
+    "sortOld": "Oldest first",
+    "fileNotFound": "File not found",
+    "deleteRecord": "Delete from history",
+    "recordRemoved": "Record removed from history"
   },
   "presets": {
     "title": "Presets",

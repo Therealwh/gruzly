@@ -22,6 +22,14 @@ pub struct HistoryRecord {
     pub total_bytes: Option<i64>,
     pub created_at: i64,
     pub finished_at: i64,
+    // v2 columns (migration): rich history fields
+    pub thumbnail: Option<String>,
+    pub format: Option<String>,
+    pub save_path: Option<String>,
+    pub started_at: Option<i64>,
+    /// One of: queued | downloading | merging | seeding | paused |
+    /// completed | failed | canceled | interrupted
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,9 +88,32 @@ impl Db {
                 created_at INTEGER NOT NULL
              );",
         )?;
+        Self::migrate(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
+    }
+
+    /// Schema migrations keyed by PRAGMA user_version. Each step is applied
+    /// in a transaction and never destroys existing data.
+    fn migrate(conn: &Connection) -> Result<(), DbError> {
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if version < 2 {
+            // v2: rich history columns (thumbnail, format, save_path,
+            // started_at, error). ALTER TABLE keeps all existing rows.
+            for column in [
+                "ALTER TABLE history ADD COLUMN thumbnail TEXT",
+                "ALTER TABLE history ADD COLUMN format TEXT",
+                "ALTER TABLE history ADD COLUMN save_path TEXT",
+                "ALTER TABLE history ADD COLUMN started_at INTEGER",
+                "ALTER TABLE history ADD COLUMN error TEXT",
+            ] {
+                // Ignore "duplicate column" — the ALTER already applied.
+                let _ = conn.execute(column, []);
+            }
+            conn.execute_batch("PRAGMA user_version = 2")?;
+        }
+        Ok(())
     }
 
     /// Persists an unfinished video job for restore-after-restart.
@@ -129,18 +160,28 @@ impl Db {
         Ok(out)
     }
 
+    pub fn delete_history_record(&self, id: &str) -> Result<(), DbError> {
+        let conn = self.conn.lock().expect("db lock");
+        conn.execute("DELETE FROM history WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
     pub fn delete_pending(&self, id: &str) -> Result<(), DbError> {
         let conn = self.conn.lock().expect("db lock");
         conn.execute("DELETE FROM pending_queue WHERE id = ?1", [id])?;
         Ok(())
     }
 
-    pub fn insert_history(&self, rec: &HistoryRecord) -> Result<(), DbError> {
+    /// Insert-or-replace a full history record (id-keyed, so status updates
+    /// never duplicate rows).
+    pub fn upsert_history(&self, rec: &HistoryRecord) -> Result<(), DbError> {
         let conn = self.conn.lock().expect("db lock");
         conn.execute(
             "INSERT OR REPLACE INTO history
-             (id, kind, engine, url, title, folder, filename, status, total_bytes, created_at, finished_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+             (id, kind, engine, url, title, folder, filename, status,
+              total_bytes, created_at, finished_at, thumbnail, format,
+              save_path, started_at, error)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
             rusqlite::params![
                 rec.id,
                 rec.kind,
@@ -152,10 +193,60 @@ impl Db {
                 rec.status,
                 rec.total_bytes,
                 rec.created_at,
-                rec.finished_at
+                rec.finished_at,
+                rec.thumbnail,
+                rec.format,
+                rec.save_path,
+                rec.started_at,
+                rec.error
             ],
         )?;
         Ok(())
+    }
+
+    /// Lightweight status patch (no full-row replace): used on every state
+    /// transition. Sets started_at the first time a job starts downloading.
+    pub fn patch_history_status(
+        &self,
+        id: &str,
+        status: &str,
+        started_at: Option<i64>,
+        error: Option<&str>,
+    ) -> Result<(), DbError> {
+        let conn = self.conn.lock().expect("db lock");
+        conn.execute(
+            "UPDATE history
+             SET status = ?2,
+                 error = COALESCE(?6, error),
+                 started_at = COALESCE(started_at, ?3),
+                 finished_at = CASE WHEN ?4 IN ('completed','failed','canceled','interrupted')
+                                    THEN COALESCE(finished_at, ?5) ELSE finished_at END
+             WHERE id = ?1",
+            rusqlite::params![
+                id,
+                status,
+                started_at,
+                status,
+                chrono::Utc::now().timestamp_millis(),
+                error
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Marks unfinished (queued/downloading/merging) tasks as interrupted
+    /// after an app restart — never as completed.
+    pub fn mark_interrupted(&self) -> Result<usize, DbError> {
+        let conn = self.conn.lock().expect("db lock");
+        let n = conn.execute(
+            "UPDATE history
+             SET status = 'interrupted',
+                 error = 'application closed during download',
+                 finished_at = COALESCE(NULLIF(finished_at, 0), ?1)
+             WHERE status IN ('queued', 'downloading', 'merging')",
+            rusqlite::params![chrono::Utc::now().timestamp_millis()],
+        )?;
+        Ok(n)
     }
 
     pub fn list_history(
@@ -168,7 +259,8 @@ impl Db {
         let conn = self.conn.lock().expect("db lock");
         let like = format!("%{}%", query.to_lowercase().replace('%', ""));
         let mut stmt = conn.prepare(
-            "SELECT id, kind, engine, url, title, folder, filename, status, total_bytes, created_at, finished_at
+            "SELECT id, kind, engine, url, title, folder, filename, status, total_bytes, created_at, finished_at,
+                    thumbnail, format, save_path, started_at, error
              FROM history
              WHERE (title LIKE ?1 OR url LIKE ?1)
                AND (?2 = 'all' OR kind = ?2)
@@ -189,6 +281,11 @@ impl Db {
                 total_bytes: row.get(8)?,
                 created_at: row.get(9)?,
                 finished_at: row.get(10)?,
+                thumbnail: row.get(11)?,
+                format: row.get(12)?,
+                save_path: row.get(13)?,
+                started_at: row.get(14)?,
+                error: row.get(15)?,
             })
         })?;
         let mut out = Vec::new();
@@ -228,15 +325,20 @@ mod tests {
             total_bytes: Some(1234),
             created_at: 100,
             finished_at: 200,
+            thumbnail: None,
+            format: None,
+            save_path: None,
+            started_at: None,
+            error: None,
         }
     }
 
     #[test]
     fn insert_and_list() {
         let db = temp_db();
-        db.insert_history(&rec("1", "alpha video", "video"))
+        db.upsert_history(&rec("1", "alpha video", "video"))
             .unwrap();
-        db.insert_history(&rec("2", "beta file", "file")).unwrap();
+        db.upsert_history(&rec("2", "beta file", "file")).unwrap();
 
         let all = db.list_history("", "all", None, 100).unwrap();
         assert_eq!(all.len(), 2);
@@ -281,7 +383,7 @@ mod tests {
     #[test]
     fn clear_history() {
         let db = temp_db();
-        db.insert_history(&rec("1", "a", "file")).unwrap();
+        db.upsert_history(&rec("1", "a", "file")).unwrap();
         assert_eq!(db.clear_history().unwrap(), 1);
         assert!(db.list_history("", "all", None, 100).unwrap().is_empty());
     }

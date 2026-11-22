@@ -94,6 +94,8 @@ pub fn run() {
             commands::remove_job,
             commands::list_jobs,
             commands::list_history,
+            commands::delete_history_record,
+            commands::check_files_exist,
             commands::clear_history,
             commands::update_ytdlp,
             commands::set_parallel,

@@ -133,8 +133,13 @@ export async function analyzeUrl(url: string): Promise<Analysis> {
 export async function startVideoDownload(
   spec: VideoDownloadSpec,
   title: string,
+  thumbnail?: string | null,
 ): Promise<string> {
-  return call<string>("start_video_download", { spec, title });
+  return call<string>("start_video_download", {
+    spec,
+    title,
+    thumbnail: thumbnail ?? null,
+  });
 }
 
 export async function startFileDownload(
@@ -230,6 +235,17 @@ export async function setTrayLanguage(lang: string): Promise<void> {
 
 // ---- history ----
 
+export type HistoryStatus =
+  | "queued"
+  | "downloading"
+  | "merging"
+  | "seeding"
+  | "paused"
+  | "completed"
+  | "failed"
+  | "canceled"
+  | "interrupted";
+
 export type HistoryRecord = {
   id: string;
   kind: "video" | "file" | "torrent";
@@ -242,6 +258,11 @@ export type HistoryRecord = {
   totalBytes: number | null;
   createdAt: number;
   finishedAt: number;
+  thumbnail: string | null;
+  format: string | null;
+  savePath: string | null;
+  startedAt: number | null;
+  error: string | null;
 };
 
 export type HistoryFilter = {
@@ -260,6 +281,15 @@ export async function listHistory(filter: HistoryFilter = {}): Promise<HistoryRe
 
 export async function clearHistory(): Promise<number> {
   return call<number>("clear_history");
+}
+
+export async function deleteHistoryRecord(id: string): Promise<void> {
+  return call<void>("delete_history_record", { id });
+}
+
+/** batch fs check for "File not found" badges */
+export async function checkFilesExist(paths: string[]): Promise<boolean[]> {
+  return call<boolean[]>("check_files_exist", { paths });
 }
 
 // ---- events ----

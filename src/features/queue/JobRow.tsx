@@ -15,6 +15,7 @@ import { cancelJob, pauseJob, removeJob, resumeJob } from "@/lib/api";
 import { formatBytes, formatEta, formatSpeed } from "@/lib/format";
 import { useUiStore } from "@/stores/ui";
 import { useQueueStore } from "@/stores/queue";
+import { openFolder } from "./JobRowHelpers";
 import { cn } from "@/lib/utils";
 
 const STATUS_TONE: Record<JobView["status"], "neutral" | "accent" | "success" | "warning" | "danger" | "info"> = {
@@ -167,16 +168,6 @@ export function JobRow({ job, compact = false }: { job: JobView; compact?: boole
       {job.status === "failed" && <ProgressBar value={1} tone="danger" className="h-1" />}
     </div>
   );
-}
-
-async function openFolder(folder: string, failMessage: string): Promise<void> {
-  try {
-    const { openPath } = await import("@tauri-apps/plugin-opener");
-    await openPath(folder);
-  } catch (e) {
-    console.warn("openFolder failed:", e);
-    toast.error(failMessage);
-  }
 }
 
 function RowAction({

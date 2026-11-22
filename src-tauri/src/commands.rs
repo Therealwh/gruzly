@@ -69,8 +69,9 @@ pub async fn start_video_download(
     queue: State<'_, QueueManager>,
     spec: VideoDownloadSpec,
     title: String,
+    thumbnail: Option<String>,
 ) -> CmdResult<String> {
-    queue::start_video(app, queue, spec, title)
+    queue::start_video(app, queue, spec, title, thumbnail)
         .await
         .map_err(|e| CommandError::of("downloadStart", e))
 }
@@ -187,6 +188,25 @@ pub async fn list_history(
     })
     .await
     .map_err(|e| CommandError::of("db", e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn delete_history_record(state: State<'_, AppState>, id: String) -> CmdResult<()> {
+    let db = state.db.clone();
+    tokio::task::spawn_blocking(move || {
+        db.delete_history_record(&id)
+            .map_err(|e| CommandError::of("db", e.to_string()))
+    })
+    .await
+    .map_err(|e| CommandError::of("db", e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn check_files_exist(paths: Vec<String>) -> CmdResult<Vec<bool>> {
+    Ok(paths
+        .into_iter()
+        .map(|p| std::path::Path::new(&p).is_file())
+        .collect())
 }
 
 #[tauri::command]

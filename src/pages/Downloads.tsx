@@ -31,13 +31,17 @@ export function Downloads() {
       !q || j.title.toLowerCase().includes(q) || j.url.toLowerCase().includes(q);
     if (tab === "active") return all.filter((j) => ["downloading", "merging", "seeding", "paused"].includes(j.status) && match(j));
     if (tab === "queued") return all.filter((j) => j.status === "queued" && match(j));
-    return all.filter((j) => ["completed", "failed", "canceled"].includes(j.status) && match(j));
+    return all.filter((j) =>
+      ["completed", "failed", "canceled", "interrupted"].includes(j.status) && match(j),
+    );
   }, [all, tab, query]);
 
   const counts = {
     active: all.filter((j) => ["downloading", "merging", "seeding", "paused"].includes(j.status)).length,
     queued: all.filter((j) => j.status === "queued").length,
-    completed: all.filter((j) => ["completed", "failed", "canceled"].includes(j.status)).length,
+    completed: all.filter((j) =>
+      ["completed", "failed", "canceled", "interrupted"].includes(j.status),
+    ).length,
   };
 
   return (

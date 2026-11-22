@@ -113,6 +113,8 @@ struct Job {
     url: String,
     /// Mutable: torrent titles arrive with metadata after the job starts.
     title: Mutex<String>,
+    /// Preview image URL (video) — for history records.
+    thumbnail: Option<String>,
     folder: Option<String>,
     status: Mutex<(JobStatus, Option<String>)>, // status + error
     progress: Mutex<Progress>,
@@ -287,6 +289,23 @@ async fn set_status(app: &AppHandle, job: &Job, status: JobStatus, error: Option
         s.0 = status.clone();
         s.1 = error.clone();
     }
+    // Keep the persistent history in sync with every transition; started_at
+    // is stamped the first time a job actually downloads.
+    {
+        let state: State<'_, crate::AppState> = app.state();
+        let db = state.db.clone();
+        let id = job.id.clone();
+        let status_str = serde_json::to_value(status.clone())
+            .ok()
+            .and_then(|v| v.as_str().map(String::from))
+            .unwrap_or_default();
+        let started_at = (status == JobStatus::Downloading).then(|| now_ms());
+        let error_str = error.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            db.patch_history_status(&id, &status_str, started_at, error_str.as_deref())
+        })
+        .await;
+    }
     let _ = app.emit(
         EVENT_STATE,
         StateEvent {
@@ -403,6 +422,7 @@ pub async fn start_video(
     queue: State<'_, QueueManager>,
     spec: VideoDownloadSpec,
     title: String,
+    thumbnail: Option<String>,
 ) -> Result<String, String> {
     let binary =
         engines::find_engine(&app, "yt-dlp").ok_or_else(|| "yt-dlp not found".to_string())?;
@@ -426,12 +446,14 @@ pub async fn start_video(
     let args = ytdlp::download_args(&spec, ffmpeg.as_ref()).map_err(|e| e.to_string())?;
 
     let id = make_id();
+    let job_thumbnail = thumbnail.clone();
     let job = Arc::new(Job {
         id: id.clone(),
         kind: JobKind::Video,
         engine: "yt-dlp".into(),
         url: spec.url.clone(),
         title: Mutex::new(title.clone()),
+        thumbnail: job_thumbnail,
         folder,
         status: Mutex::new((JobStatus::Queued, None)),
         progress: Mutex::new(Progress::default()),
@@ -446,21 +468,48 @@ pub async fn start_video(
     queue.jobs.lock().await.insert(id.clone(), job.clone());
     queue.order.lock().await.push(id.clone());
 
-    // Persist for restore-after-restart (removed on terminal states).
+    // Persist for restore-after-restart (removed on terminal states) and
+    // create the history record at ADD time (patched on transitions).
     {
         let state: State<'_, crate::AppState> = app.state();
         let db = state.db.clone();
+        let db2 = db.clone();
+        let spec_json = job
+            .spec
+            .as_ref()
+            .map(|s| serde_json::to_string(s).expect("spec json"))
+            .unwrap_or_default();
+        let format = job.spec.as_ref().and_then(|s| s.format_selector.clone());
         let pending = crate::core::db::PendingJob {
             id: id.clone(),
             kind: "video".into(),
             url: job.url.clone(),
             title: title.clone(),
             folder: job.folder.clone(),
-            spec_json: serde_json::to_string(job.spec.as_ref().expect("video job has a spec"))
-                .expect("spec json"),
+            spec_json,
             created_at: job.created_at,
         };
         let _ = tokio::task::spawn_blocking(move || db.save_pending(&pending)).await;
+
+        let hist = crate::core::db::HistoryRecord {
+            id: id.clone(),
+            kind: "video".into(),
+            engine: "yt-dlp".into(),
+            url: job.url.clone(),
+            title: title.clone(),
+            folder: job.folder.clone(),
+            filename: None,
+            status: "queued".into(),
+            total_bytes: None,
+            created_at: job.created_at,
+            finished_at: 0,
+            thumbnail: thumbnail.clone(),
+            format,
+            save_path: job.folder.clone(),
+            started_at: None,
+            error: None,
+        };
+        let _ = tokio::task::spawn_blocking(move || db2.upsert_history(&hist)).await;
     }
 
     emit_state(&app, &id, JobStatus::Queued, Some(title.clone()), None);
@@ -883,6 +932,7 @@ pub async fn restore_pending_jobs(app: AppHandle) -> usize {
             engine: "yt-dlp".into(),
             url: row.url.clone(),
             title: Mutex::new(row.title.clone()),
+            thumbnail: None,
             folder: row.folder.clone(),
             status: Mutex::new((JobStatus::Paused, None)),
             progress: Mutex::new(Progress::default()),
@@ -1011,6 +1061,7 @@ fn base_job(url: String, title: String, folder: Option<String>) -> Job {
         engine: "aria2".into(),
         url,
         title: Mutex::new(title),
+        thumbnail: None,
         folder,
         status: Mutex::new((JobStatus::Queued, None)),
         progress: Mutex::new(Progress::default()),
@@ -1433,19 +1484,34 @@ async fn record_history(app: &AppHandle, job: &Job, status: JobStatus, total_byt
         url: job.url.clone(),
         title: job.title.lock().await.clone(),
         folder: job.folder.clone(),
-        filename: view.filename,
+        filename: view.filename.clone(),
         status: match status {
             JobStatus::Completed => "completed".to_string(),
             JobStatus::Failed => "failed".to_string(),
             JobStatus::Canceled => "canceled".to_string(),
+            JobStatus::Seeding => "seeding".to_string(),
             _ => "unknown".to_string(),
         },
         total_bytes: Some(total_bytes),
         created_at: job.created_at,
         finished_at: now_ms(),
+        thumbnail: job.thumbnail.clone(),
+        format: job.spec.as_ref().and_then(|s| s.format_selector.clone()),
+        save_path: view
+            .filename
+            .as_ref()
+            .map(|f| {
+                std::path::Path::new(f)
+                    .parent()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|| f.clone())
+            })
+            .or_else(|| job.folder.clone()),
+        started_at: None,
+        error: view.error,
     };
     let db = state.db.clone();
-    let _ = tokio::task::spawn_blocking(move || db.insert_history(&rec)).await;
+    let _ = tokio::task::spawn_blocking(move || db.upsert_history(&rec)).await;
 }
 
 /// Files of a torrent job (for the selection modal).

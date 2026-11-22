@@ -30,6 +30,34 @@ versioning: SemVer.
   --auto-file-renaming=false (known aria2 behavior, issue #1542).
 - Non-JSON engine output streams into the task row as live activity.
 
+## [0.3.0] — 2026-11-23
+
+### Added — full persistent download history
+- Every download creates a history record at ADD time (not only on
+  completion); status transitions patch the same record, so nothing is
+  duplicated or lost.
+- Records keep: URL, title, thumbnail, kind (video/file/torrent), selected
+  format, save path, size, engine, added/started/finished timestamps, final
+  status and error text.
+- Restart handling: unfinished (queued/downloading/merging) history rows are
+  marked "interrupted" — never "completed". Unfinished video downloads also
+  restore as paused tasks (Resume continues, data where the engine supports
+  it).
+- History UI: thumbnails, status and type filters, search, date sorting,
+  "File not found" badges for records whose save path disappeared, and
+  per-record actions: open file, open folder, copy link, re-download,
+  delete record.
+- Deleting a history record never deletes the downloaded file; clearing
+  history never touches files.
+
+### Technical
+- SQLite migration to user_version=2: history gains thumbnail, format,
+  save_path, started_at, error columns (ALTER — no data loss).
+- History is upserted/patched id-keyed: no duplicate rows on repeated
+  status transitions; concurrent downloads safe (single-writer connection,
+  spawn_blocking).
+- The DB path is unchanged: app_data_dir/gruzly.db — updates do not touch it.
+
 ## [0.2.1] — 2026-11-23
 
 ### Fixed

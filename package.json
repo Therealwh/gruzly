@@ -13,7 +13,8 @@
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
     "engines:fetch": "node scripts/fetch-engines.mjs",
-    "icons:gen": "node scripts/gen-icon.mjs"
+    "icons:gen": "node scripts/gen-icon.mjs",
+    "package:portable": "node scripts/package-portable.mjs"
   },
   "dependencies": {
     "@fontsource/inter": "^5.1.0",

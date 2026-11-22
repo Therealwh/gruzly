@@ -8,7 +8,7 @@
 //! Probes run the engine with a version flag, arguments passed as a
 //! vector (never a shell string), with a hard timeout.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
@@ -153,7 +153,7 @@ fn path_dirs() -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
-fn find_binary(dir: &PathBuf, names: &[String]) -> Option<PathBuf> {
+fn find_binary(dir: &Path, names: &[String]) -> Option<PathBuf> {
     for name in names {
         let candidate = dir.join(name);
         if candidate.is_file() {

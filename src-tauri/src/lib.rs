@@ -26,8 +26,9 @@ pub struct AppState {
 /// Fire-and-forget yt-dlp self-update at startup: extractors break
 /// regularly, the app must self-heal. Only when the binary is bundled
 /// (PATH copies belong to the system package manager).
+/// Runs on Tauri's async runtime — setup() has no ambient Tokio context.
 fn schedule_ytdlp_auto_update(app: tauri::AppHandle) {
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         let bundled = core::engines::probe_all(&app)
             .into_iter()
             .any(|e| e.id == "yt-dlp" && e.source.as_deref() == Some("bundled"));

@@ -1,0 +1,30 @@
+name: Bug report
+description: Something is broken
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: Include steps to reproduce and a screenshot if it's visual. Please test in both themes.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Gruzly version
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options: [Windows, macOS, Linux]
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Log file lives in the app data dir (gruzly.log). Never paste cookies or personal URLs you want private.

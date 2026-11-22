@@ -760,9 +760,10 @@ pub async fn start_file(
     url: String,
     title: Option<String>,
 ) -> Result<String, String> {
+    super::ytdlp::validate_url(&url).map_err(|e| e.to_string())?;
     let daemon = ensure_aria2(&app).await?;
     let gid = daemon
-        .add_uri(&[url.clone()], json!({}), false)
+        .add_uri(std::slice::from_ref(&url), json!({}), false)
         .await
         .map_err(|e| e.to_string())?;
     if gid.is_empty() {
@@ -802,12 +803,15 @@ pub async fn start_torrent(
     queue: State<'_, QueueManager>,
     source: TorrentSource,
 ) -> Result<String, String> {
+    if let TorrentSource::Magnet(magnet) = &source {
+        super::ytdlp::validate_magnet(magnet).map_err(|e| e.to_string())?;
+    }
     let daemon = ensure_aria2(&app).await?;
 
     let (gid, url) = match &source {
         TorrentSource::Magnet(magnet) => (
             daemon
-                .add_uri(&[magnet.clone()], json!({}), true)
+                .add_uri(std::slice::from_ref(magnet), json!({}), true)
                 .await
                 .map_err(|e| e.to_string())?,
             magnet.clone(),

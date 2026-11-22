@@ -89,6 +89,7 @@ pub struct PlaylistEntry {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
+#[allow(clippy::large_enum_variant)] // video payload dominates; sizes stay reasonable
 pub enum Analysis {
     Video {
         meta: VideoMeta,
@@ -189,6 +190,63 @@ impl RawFormat {
 }
 
 // ---------------------------------------------------------------------------
+// Security validation
+// ---------------------------------------------------------------------------
+
+const COOKIE_BROWSERS: [&str; 8] = [
+    "chrome", "firefox", "edge", "brave", "chromium", "opera", "vivaldi", "safari",
+];
+
+/// Validates a URL before it ever reaches an engine command line:
+/// known scheme + non-empty host + no leading dash (argument injection).
+pub fn validate_url(url: &str) -> Result<(), YtdlpError> {
+    if url.trim_start_matches('-').len() != url.len() {
+        return Err(YtdlpError::Engine("invalid url".into()));
+    }
+    let parsed = url::Url::parse(url).map_err(|_| YtdlpError::Engine("invalid url".into()))?;
+    let ok = matches!(parsed.scheme(), "http" | "https" | "ftp")
+        && parsed.host_str().map(|h| !h.is_empty()).unwrap_or(false);
+    if !ok {
+        return Err(YtdlpError::Engine("unsupported url scheme".into()));
+    }
+    Ok(())
+}
+
+/// Magnet links: strict prefix + no leading dash (argument injection).
+pub fn validate_magnet(magnet: &str) -> Result<(), YtdlpError> {
+    let lower = magnet.to_lowercase();
+    let ok = lower.starts_with("magnet:?xt=urn:btih:")
+        || lower.starts_with("magnet:?xt=urn:sha1:")
+        || lower.starts_with("magnet:?xt=urn:btmh:");
+    if ok && magnet.trim_start_matches('-').len() == magnet.len() {
+        Ok(())
+    } else {
+        Err(YtdlpError::Engine("invalid magnet link".into()))
+    }
+}
+
+/// Only known browsers for --cookies-from-browser (IPC values are untrusted).
+pub fn validate_cookies_browser(browser: &str) -> Result<(), YtdlpError> {
+    if COOKIE_BROWSERS.contains(&browser.to_lowercase().as_str()) {
+        Ok(())
+    } else {
+        Err(YtdlpError::Engine("unknown browser".into()))
+    }
+}
+
+/// Output templates must stay inside the destination folder.
+pub fn sanitize_output_template(template: &str) -> Result<String, YtdlpError> {
+    let t = template.trim();
+    if t.is_empty() {
+        return Ok("%(title)s.%(ext)s".into());
+    }
+    if t.starts_with(['/', '\\']) || t.contains("..") || t.contains(':') {
+        return Err(YtdlpError::Engine("invalid output template".into()));
+    }
+    Ok(t.to_string())
+}
+
+// ---------------------------------------------------------------------------
 // Analysis
 // ---------------------------------------------------------------------------
 
@@ -242,6 +300,7 @@ fn run_ytdlp(binary: &PathBuf, args: &[String]) -> Result<String, YtdlpError> {
 
 /// Analyzes a video URL: either a single video with formats or a playlist.
 pub fn analyze(binary: &PathBuf, url: &str) -> Result<Analysis, YtdlpError> {
+    validate_url(url)?;
     // 1. Try as a single video.
     let mut args: Vec<String> = base_analysis_args().into_iter().map(String::from).collect();
     args.push("--no-playlist".into());
@@ -410,6 +469,15 @@ pub fn download_args(
     spec: &VideoDownloadSpec,
     ffmpeg_location: Option<&PathBuf>,
 ) -> Result<Vec<String>, YtdlpError> {
+    validate_url(&spec.url)?;
+    if let Some(browser) = &spec.cookies_browser {
+        validate_cookies_browser(browser)?;
+    }
+    let template = match &spec.output_template {
+        Some(t) => Some(sanitize_output_template(t)?),
+        None => None,
+    };
+
     let mut args: Vec<String> = vec![
         "--newline".into(),
         "--no-warnings".into(),
@@ -480,20 +548,20 @@ pub fn download_args(
         }
     }
 
-    match (&spec.folder, &spec.output_template) {
-        (Some(folder), Some(template)) => {
+    match (&spec.folder, &template) {
+        (Some(folder), Some(tmpl)) => {
             args.push("-P".into());
             args.push(folder.clone());
             args.push("-o".into());
-            args.push(template.clone());
+            args.push(tmpl.clone());
         }
         (Some(folder), None) => {
             args.push("-P".into());
             args.push(folder.clone());
         }
-        (None, Some(template)) => {
+        (None, Some(tmpl)) => {
             args.push("-o".into());
-            args.push(template.clone());
+            args.push(tmpl.clone());
         }
         (None, None) => {}
     }
@@ -598,6 +666,46 @@ mod tests {
             }
             _ => panic!("expected playlist"),
         }
+    }
+
+    #[test]
+    fn url_validation_rejects_injection_and_bad_schemes() {
+        assert!(validate_url("https://youtu.be/x").is_ok());
+        assert!(validate_url("ftp://example.org/f.iso").is_ok());
+        assert!(validate_url("--config-file=/etc/passwd").is_err());
+        assert!(validate_url("file:///C:/Windows").is_err());
+        assert!(validate_url("javascript:alert(1)").is_err());
+        assert!(validate_url("not a url").is_err());
+        assert!(validate_url("https://").is_err()); // no host
+    }
+
+    #[test]
+    fn magnet_validation() {
+        assert!(validate_magnet("magnet:?xt=urn:btih:abcdef&dn=t").is_ok());
+        assert!(validate_magnet("MAGNET:?xt=urn:btih:abc").is_ok());
+        assert!(validate_magnet("https://example.org/x.torrent").is_err());
+        assert!(validate_magnet("magnet:?dn=no-hash").is_err());
+        assert!(validate_magnet("--magnet:?xt=urn:btih:abc").is_err());
+    }
+
+    #[test]
+    fn cookies_browser_allowlist() {
+        assert!(validate_cookies_browser("Chrome").is_ok());
+        assert!(validate_cookies_browser("firefox").is_ok());
+        assert!(validate_cookies_browser("--proxy=evil").is_err());
+        assert!(validate_cookies_browser("").is_err());
+    }
+
+    #[test]
+    fn output_template_stays_in_folder() {
+        assert_eq!(
+            sanitize_output_template("%(title)s.%(ext)s").unwrap(),
+            "%(title)s.%(ext)s"
+        );
+        assert_eq!(sanitize_output_template("  ").unwrap(), "%(title)s.%(ext)s");
+        assert!(sanitize_output_template("../evil.%(ext)s").is_err());
+        assert!(sanitize_output_template("/abs/path.%(ext)s").is_err());
+        assert!(sanitize_output_template(r"C:\x.%(ext)s").is_err());
     }
 
     #[test]

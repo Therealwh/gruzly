@@ -1196,7 +1196,7 @@ pub async fn torrent_files(
     let fallback_title = job.title.lock().await.clone();
     Ok(TorrentReadyEvent {
         job_id: job.id.clone(),
-        name: status.torrent_name().unwrap_or_else(|| fallback_title),
+        name: status.torrent_name().unwrap_or(fallback_title),
         files: status
             .files
             .iter()

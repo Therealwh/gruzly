@@ -5,17 +5,17 @@
     "yt-dlp": {
       "version": "2026.10.26",
       "source": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.26/yt-dlp.exe",
-      "sha256": "f5389d3698ecde4ef06f4e6b1ce0294fe9ac1396228c8990b8d3416d6d177a7d"
+      "sha256": { "win32-x86_64": "f5389d3698ecde4ef06f4e6b1ce0294fe9ac1396228c8990b8d3416d6d177a7d" }
     },
     "aria2c": {
       "version": "1.37.0",
       "source": "https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip",
-      "sha256": "be2099c214f63a3cb4954b09a0becd6e2e34660b886d4c898d260febfe9d70c2"
+      "sha256": { "win32-x86_64": "be2099c214f63a3cb4954b09a0becd6e2e34660b886d4c898d260febfe9d70c2" }
     },
     "ffmpeg": {
       "version": "N-129166-gae9f4540cb-20261121",
       "source": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-11-21-13-07/ffmpeg-master-latest-win64-gpl.zip",
-      "sha256": "c21022af8e6dab352d878a4df7e12261674866de276c69901132bf6421af83dd"
+      "sha256": { "win32-x86_64": "c21022af8e6dab352d878a4df7e12261674866de276c69901132bf6421af83dd" }
     }
   }
 }

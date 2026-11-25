@@ -83,9 +83,11 @@ function sha256(path) {
 }
 
 async function verifyEngineHash(name, path) {
-  const expected = LOCK.engines?.[name]?.sha256;
+  const lock = LOCK.engines?.[name]?.sha256;
+  const key = `${process.platform}-${process.arch}`;
+  const expected = typeof lock === "string" ? lock : lock?.[key];
   if (!expected || !/^[a-f0-9]{64}$/i.test(expected)) {
-    throw new Error(`missing valid SHA-256 lock for ${name}`);
+    throw new Error(`missing valid SHA-256 lock for ${name} (${key})`);
   }
   const actual = await sha256(path);
   if (actual.toLowerCase() !== expected.toLowerCase()) {

@@ -540,21 +540,46 @@ pub struct VideoDownloadSpec {
     pub proxy: Option<String>,
 }
 
+fn de_f64_lenient<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<f64>, D::Error> {
+    let value = serde_json::Value::deserialize(d)?;
+    match value {
+        serde_json::Value::Number(number) => Ok(number.as_f64()),
+        serde_json::Value::String(text) => Ok(text.parse::<f64>().ok()),
+        serde_json::Value::Null => Ok(None),
+        _ => Ok(None),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct YtdlpProgress {
     // NOTE: no rename_all — yt-dlp emits snake_case keys in %(progress)j.
     // A camelCase rename silently made every field None ("0 KB, no bar").
     pub status: Option<String>, // downloading | finished
     pub filename: Option<String>,
-    #[serde(default, rename = "downloaded_bytes", alias = "downloadedBytes")]
+    #[serde(
+        default,
+        rename = "downloaded_bytes",
+        alias = "downloadedBytes",
+        deserialize_with = "de_f64_lenient"
+    )]
     pub downloaded_bytes: Option<f64>,
-    #[serde(default, rename = "total_bytes", alias = "totalBytes")]
+    #[serde(
+        default,
+        rename = "total_bytes",
+        alias = "totalBytes",
+        deserialize_with = "de_f64_lenient"
+    )]
     pub total_bytes: Option<f64>,
-    #[serde(default, rename = "total_bytes_estimate", alias = "totalBytesEstimate")]
+    #[serde(
+        default,
+        rename = "total_bytes_estimate",
+        alias = "totalBytesEstimate",
+        deserialize_with = "de_f64_lenient"
+    )]
     pub total_bytes_estimate: Option<f64>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_f64_lenient")]
     pub speed: Option<f64>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_f64_lenient")]
     pub eta: Option<f64>,
     #[serde(default, rename = "fragment_index", alias = "fragmentIndex")]
     pub fragment_index: Option<u64>,
@@ -853,6 +878,17 @@ mod tests {
         assert_eq!(p.speed, Some(100.5));
         assert_eq!(p.eta, Some(12.0));
         assert_eq!(p.filename.as_deref(), Some("x.part"));
+    }
+
+    #[test]
+    fn progress_numbers_as_strings_parse() {
+        let p: YtdlpProgress = serde_json::from_str(
+            r#"{"status":"downloading","downloaded_bytes":"1024","total_bytes":"4096","speed":"128"}"#,
+        )
+        .unwrap();
+        assert_eq!(p.downloaded_bytes, Some(1024.0));
+        assert_eq!(p.total(), Some(4096.0));
+        assert_eq!(p.speed, Some(128.0));
     }
 
     #[test]

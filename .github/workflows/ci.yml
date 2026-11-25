@@ -56,7 +56,7 @@ jobs:
         run: npm run engines:fetch
       - run: npm ci
       - name: Build bundles
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # createUpdaterArtifacts requires a signing key on every build

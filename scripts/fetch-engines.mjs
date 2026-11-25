@@ -59,7 +59,7 @@ const SOURCES = {
     darwin: [{ system: "ffmpeg" }],
     linux: [
       {
-        url: "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-linux64-gpl.tar.xz",
+        url: "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-11-21-12-37/ffmpeg-N-129166-gae9f4540cb-linux64-gpl.tar.xz",
         inner: "bin/ffmpeg",
       },
     ],

@@ -33,9 +33,9 @@ function ext(name) {
 
 const SOURCES = {
   "yt-dlp": {
-    win32: ["https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"],
-    darwin: ["https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos"],
-    linux: ["https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux"],
+    win32: ["https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.26/yt-dlp.exe"],
+    darwin: ["https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.26/yt-dlp_macos"],
+    linux: ["https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.26/yt-dlp_linux"],
   },
   aria2c: {
     win32: [
@@ -52,7 +52,7 @@ const SOURCES = {
   ffmpeg: {
     win32: [
       {
-        url: "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip",
+        url: "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-11-21-12-37/ffmpeg-N-129166-gae9f4540cb-win64-gpl.zip",
         inner: "bin/ffmpeg.exe",
       },
     ],

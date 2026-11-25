@@ -23,9 +23,6 @@ use tokio::sync::{Mutex, Notify};
 
 static YTDLP_UPDATE_LOCK: Mutex<()> = Mutex::const_new(());
 
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
-
 use super::aria2::Aria2Daemon;
 use super::db::HistoryRecord;
 use super::engines;

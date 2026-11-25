@@ -126,7 +126,9 @@ async function fetchEngine(name, spec, outFile) {
       copyFileSync(found, outFile);
     }
     if (!existsSync(outFile)) throw new Error(`copy failed: ${found} → ${outFile}`);
-    return true;
+    // System-managed binaries are not reproducible artifacts; the distro or
+    // Homebrew package manager supplies their own integrity chain.
+    return false;
   }
   const url = typeof entry === "string" ? entry : entry.url;
   const inner = typeof entry === "string" ? undefined : entry.inner;

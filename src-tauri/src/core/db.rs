@@ -86,6 +86,10 @@ impl Db {
                 folder     TEXT,
                 spec_json  TEXT NOT NULL,
                 created_at INTEGER NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS app_settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
              );",
         )?;
         Self::migrate(&conn)?;
@@ -112,6 +116,23 @@ impl Db {
                 let _ = conn.execute(column, []);
             }
             conn.execute_batch("PRAGMA user_version = 2")?;
+        }
+        if version < 3 {
+            conn.execute_batch(
+                "ALTER TABLE history ADD COLUMN search_text TEXT NOT NULL DEFAULT '';",
+            )?;
+            let mut stmt = conn.prepare("SELECT id, title, url FROM history")?;
+            let rows: Vec<(String, String, String)> = stmt
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+                .collect::<Result<_, _>>()?;
+            drop(stmt);
+            for (id, title, url) in rows {
+                conn.execute(
+                    "UPDATE history SET search_text = ?2 WHERE id = ?1",
+                    rusqlite::params![id, format!("{} {}", title, url).to_lowercase()],
+                )?;
+            }
+            conn.execute_batch("PRAGMA user_version = 3")?;
         }
         Ok(())
     }
@@ -172,6 +193,23 @@ impl Db {
         Ok(())
     }
 
+    pub fn get_setting(&self, key: &str) -> Result<Option<String>, DbError> {
+        let conn = self.conn.lock().expect("db lock");
+        let mut stmt = conn.prepare("SELECT value FROM app_settings WHERE key = ?1")?;
+        let mut rows = stmt.query([key])?;
+        Ok(rows.next()?.map(|row| row.get(0)).transpose()?)
+    }
+
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<(), DbError> {
+        let conn = self.conn.lock().expect("db lock");
+        conn.execute(
+            "INSERT INTO app_settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            rusqlite::params![key, value],
+        )?;
+        Ok(())
+    }
+
     /// Insert-or-replace a full history record (id-keyed, so status updates
     /// never duplicate rows).
     pub fn upsert_history(&self, rec: &HistoryRecord) -> Result<(), DbError> {
@@ -180,8 +218,8 @@ impl Db {
             "INSERT OR REPLACE INTO history
              (id, kind, engine, url, title, folder, filename, status,
               total_bytes, created_at, finished_at, thumbnail, format,
-              save_path, started_at, error)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
+              save_path, started_at, error, search_text)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
             rusqlite::params![
                 rec.id,
                 rec.kind,
@@ -198,7 +236,8 @@ impl Db {
                 rec.format,
                 rec.save_path,
                 rec.started_at,
-                rec.error
+                rec.error,
+                format!("{} {}", rec.title, rec.url).to_lowercase()
             ],
         )?;
         Ok(())
@@ -220,7 +259,7 @@ impl Db {
                  error = COALESCE(?6, error),
                  started_at = COALESCE(started_at, ?3),
                  finished_at = CASE WHEN ?4 IN ('completed','failed','canceled','interrupted')
-                                    THEN COALESCE(finished_at, ?5) ELSE finished_at END
+                                    THEN COALESCE(NULLIF(finished_at, 0), ?5) ELSE finished_at END
              WHERE id = ?1",
             rusqlite::params![
                 id,
@@ -229,6 +268,38 @@ impl Db {
                 status,
                 chrono::Utc::now().timestamp_millis(),
                 error
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn finish_history(
+        &self,
+        id: &str,
+        status: &str,
+        total_bytes: i64,
+        filename: Option<&str>,
+        save_path: Option<&str>,
+        error: Option<&str>,
+    ) -> Result<(), DbError> {
+        let conn = self.conn.lock().expect("db lock");
+        conn.execute(
+            "UPDATE history
+             SET status = ?2,
+                 total_bytes = ?3,
+                 filename = COALESCE(?4, filename),
+                 save_path = COALESCE(?5, save_path),
+                 error = COALESCE(?6, error),
+                 finished_at = ?7
+             WHERE id = ?1",
+            rusqlite::params![
+                id,
+                status,
+                total_bytes,
+                filename,
+                save_path,
+                error,
+                chrono::Utc::now().timestamp_millis()
             ],
         )?;
         Ok(())
@@ -252,42 +323,52 @@ impl Db {
     pub fn list_history(
         &self,
         query: &str,
-        kind: &str, // all | video | file | torrent
+        kind: &str,   // all | video | file | torrent
+        status: &str, // all | completed | failed | canceled | interrupted
         since_ms: Option<i64>,
         limit: u32,
     ) -> Result<Vec<HistoryRecord>, DbError> {
         let conn = self.conn.lock().expect("db lock");
-        let like = format!("%{}%", query.to_lowercase().replace('%', ""));
+        let escaped = query
+            .to_lowercase()
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let like = format!("%{escaped}%");
         let mut stmt = conn.prepare(
             "SELECT id, kind, engine, url, title, folder, filename, status, total_bytes, created_at, finished_at,
                     thumbnail, format, save_path, started_at, error
              FROM history
-             WHERE (title LIKE ?1 OR url LIKE ?1)
+             WHERE search_text LIKE ?1 ESCAPE '\\'
                AND (?2 = 'all' OR kind = ?2)
-               AND (?3 IS NULL OR created_at >= ?3)
+               AND (?3 = 'all' OR status = ?3)
+               AND (?4 IS NULL OR created_at >= ?4)
              ORDER BY finished_at DESC
-             LIMIT ?4",
+             LIMIT ?5",
         )?;
-        let rows = stmt.query_map(rusqlite::params![like, kind, since_ms, limit], |row| {
-            Ok(HistoryRecord {
-                id: row.get(0)?,
-                kind: row.get(1)?,
-                engine: row.get(2)?,
-                url: row.get(3)?,
-                title: row.get(4)?,
-                folder: row.get(5)?,
-                filename: row.get(6)?,
-                status: row.get(7)?,
-                total_bytes: row.get(8)?,
-                created_at: row.get(9)?,
-                finished_at: row.get(10)?,
-                thumbnail: row.get(11)?,
-                format: row.get(12)?,
-                save_path: row.get(13)?,
-                started_at: row.get(14)?,
-                error: row.get(15)?,
-            })
-        })?;
+        let rows = stmt.query_map(
+            rusqlite::params![like, kind, status, since_ms, limit],
+            |row| {
+                Ok(HistoryRecord {
+                    id: row.get(0)?,
+                    kind: row.get(1)?,
+                    engine: row.get(2)?,
+                    url: row.get(3)?,
+                    title: row.get(4)?,
+                    folder: row.get(5)?,
+                    filename: row.get(6)?,
+                    status: row.get(7)?,
+                    total_bytes: row.get(8)?,
+                    created_at: row.get(9)?,
+                    finished_at: row.get(10)?,
+                    thumbnail: row.get(11)?,
+                    format: row.get(12)?,
+                    save_path: row.get(13)?,
+                    started_at: row.get(14)?,
+                    error: row.get(15)?,
+                })
+            },
+        )?;
         let mut out = Vec::new();
         for row in rows {
             out.push(row?);
@@ -340,14 +421,14 @@ mod tests {
             .unwrap();
         db.upsert_history(&rec("2", "beta file", "file")).unwrap();
 
-        let all = db.list_history("", "all", None, 100).unwrap();
+        let all = db.list_history("", "all", "all", None, 100).unwrap();
         assert_eq!(all.len(), 2);
 
-        let videos = db.list_history("", "video", None, 100).unwrap();
+        let videos = db.list_history("", "video", "all", None, 100).unwrap();
         assert_eq!(videos.len(), 1);
         assert_eq!(videos[0].title, "alpha video");
 
-        let matched = db.list_history("beta", "all", None, 100).unwrap();
+        let matched = db.list_history("beta", "all", "all", None, 100).unwrap();
         assert_eq!(matched.len(), 1);
     }
 
@@ -361,6 +442,61 @@ mod tests {
             spec_json: r#"{"url":"https://youtu.be/x","audioOnly":false,"subtitles":[]}"#.into(),
             created_at: 42,
         }
+    }
+
+    #[test]
+    fn migrates_legacy_rows_with_unicode_search_text() {
+        let dir = std::env::temp_dir().join(format!(
+            "gruzly-legacy-test-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("legacy.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE history (
+                    id TEXT PRIMARY KEY, kind TEXT NOT NULL, engine TEXT NOT NULL,
+                    url TEXT NOT NULL, title TEXT NOT NULL, folder TEXT, filename TEXT,
+                    status TEXT NOT NULL, total_bytes INTEGER, created_at INTEGER NOT NULL,
+                    finished_at INTEGER NOT NULL
+                );",
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO history (id, kind, engine, url, title, status, created_at, finished_at)
+                 VALUES ('legacy', 'video', 'yt-dlp', 'https://example.org', 'БОЛЬШОЕ ВИДЕО', 'completed', 1, 2)",
+                [],
+            )
+            .unwrap();
+        }
+        let db = Db::open(&path).unwrap();
+        assert_eq!(
+            db.list_history("видео", "all", "all", None, 100)
+                .unwrap()
+                .len(),
+            1
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn unicode_search_and_status_filter() {
+        let db = temp_db();
+        let mut item = rec("ru", "Большое ВИДЕО", "video");
+        item.status = "failed".into();
+        db.upsert_history(&item).unwrap();
+
+        assert_eq!(
+            db.list_history("видео", "all", "failed", None, 100)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(db
+            .list_history("видео", "all", "completed", None, 100)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -385,6 +521,9 @@ mod tests {
         let db = temp_db();
         db.upsert_history(&rec("1", "a", "file")).unwrap();
         assert_eq!(db.clear_history().unwrap(), 1);
-        assert!(db.list_history("", "all", None, 100).unwrap().is_empty());
+        assert!(db
+            .list_history("", "all", "all", None, 100)
+            .unwrap()
+            .is_empty());
     }
 }

@@ -213,12 +213,28 @@ export async function updateYtdlp(): Promise<string> {
   return call<string>("update_ytdlp");
 }
 
+export async function prepareShutdown(): Promise<void> {
+  return call<void>("prepare_shutdown");
+}
+
 export async function setParallel(n: number): Promise<void> {
   return call<void>("set_parallel", { n });
 }
 
 export async function setSpeedLimit(limit: string): Promise<void> {
   return call<void>("set_speed_limit", { limit });
+}
+
+export async function setSeedRatio(ratio: string): Promise<void> {
+  return call<void>("set_seed_ratio", { ratio });
+}
+
+export async function setProxy(proxy: string): Promise<void> {
+  return call<void>("set_proxy", { proxy });
+}
+
+export async function setEngineAutoUpdate(enabled: boolean): Promise<void> {
+  return call<void>("set_engine_autoupdate", { enabled });
 }
 
 export async function setJobOrder(ids: string[]): Promise<void> {
@@ -268,6 +284,7 @@ export type HistoryRecord = {
 export type HistoryFilter = {
   query?: string;
   kind?: "all" | "video" | "file" | "torrent";
+  status?: "all" | "completed" | "failed" | "canceled" | "interrupted";
   sinceMs?: number | null;
 };
 
@@ -275,6 +292,7 @@ export async function listHistory(filter: HistoryFilter = {}): Promise<HistoryRe
   return call<HistoryRecord[]>("list_history", {
     query: filter.query ?? null,
     kind: filter.kind ?? "all",
+    status: filter.status ?? "all",
     sinceMs: filter.sinceMs ?? null,
   });
 }

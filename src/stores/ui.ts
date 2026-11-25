@@ -45,17 +45,12 @@ export function applyThemeToDom(theme: ResolvedTheme): void {
   root.classList.remove("dark", "light");
   root.classList.add(theme);
   root.style.colorScheme = theme;
-  try {
-    localStorage.setItem(THEME_STORAGE_KEY, theme === "light" ? "light" : "dark");
-  } catch {
-    /* storage unavailable */
-  }
 }
 
 function storedThemeMode(): ThemeMode {
   try {
     const stored = localStorage.getItem(THEME_STORAGE_KEY);
-    if (stored === "dark" || stored === "light") return stored;
+    if (stored === "dark" || stored === "light" || stored === "system") return stored;
   } catch {
     /* storage unavailable */
   }

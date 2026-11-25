@@ -52,7 +52,13 @@ pub fn build_tray(app: &AppHandle, lang: &str) -> tauri::Result<()> {
                     crate::core::queue::resume_all_jobs(app.clone(), queue).await;
                 });
             }
-            "quit" => app.exit(0),
+            "quit" => {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    crate::shutdown_for_tray(&app).await;
+                    app.exit(0);
+                });
+            }
             _ => {}
         })
         .icon(app.default_window_icon().expect("window icon").clone())

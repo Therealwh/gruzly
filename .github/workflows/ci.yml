@@ -15,6 +15,7 @@ jobs:
     uses: ./.github/workflows/quality.yml
 
   build:
+    if: github.event_name == 'push'
     name: Build (${{ matrix.os }})
     needs: quality
     strategy:

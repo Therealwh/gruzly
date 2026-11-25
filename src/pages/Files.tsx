@@ -8,6 +8,8 @@ import { useAnalysisStore } from "@/stores/analysis";
 import { useSettingsStore } from "@/stores/settings";
 
 /** Reads a local .torrent file as base64 for aria2.addTorrent. */
+const MAX_TORRENT_BYTES = 10 * 1024 * 1024;
+
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -98,6 +100,10 @@ export function Files() {
 
   const onTorrentFile = useCallback(
     async (file: File) => {
+      if (file.size > MAX_TORRENT_BYTES) {
+        toast.error(t("errors.generic"));
+        return;
+      }
       const folder = useSettingsStore.getState().downloadFolder || null;
       try {
         const b64 = await fileToBase64(file);

@@ -75,10 +75,10 @@ export function History() {
   const [confirmClear, setConfirmClear] = useState(false);
 
   const reload = useCallback(() => {
-    void listHistory({ query, kind, sinceMs: SINCE[dateFilter] })
+    void listHistory({ query, kind, status, sinceMs: SINCE[dateFilter] })
       .then(setRecords)
       .catch(() => setRecords([]));
-  }, [query, kind, dateFilter]);
+  }, [query, kind, status, dateFilter]);
 
   useEffect(() => {
     const h = window.setTimeout(reload, 200); // debounce search
@@ -159,6 +159,7 @@ export function History() {
             { value: "completed", label: t("common.status.completed") },
             { value: "failed", label: t("common.status.failed") },
             { value: "canceled", label: t("common.status.canceled") },
+            { value: "interrupted", label: t("common.status.interrupted") },
           ]}
         />
         <Segmented
@@ -251,15 +252,14 @@ function HistoryList({
 
   // Batch "file not found" checks for visible save paths (one IPC call).
   useEffect(() => {
-    const paths = records
-      .map((r) => r.savePath ?? (r.filename ?? ""))
-      .filter((p) => p.length > 3);
-    if (paths.length === 0) return;
-    void checkFilesExist(paths).then((res) => {
+    const indexed = records
+      .map((r, index) => ({ r, index, path: r.filename ?? "" }))
+      .filter(({ path }) => path.length > 3);
+    if (indexed.length === 0) return;
+    void checkFilesExist(indexed.map(({ path }) => path)).then((res) => {
       const map: Record<string, boolean> = {};
-      records.forEach((r, i) => {
-        const p = r.savePath ?? (r.filename ?? "");
-        if (p.length > 3) map[r.id] = !(res[i] ?? true);
+      indexed.forEach(({ r }, index) => {
+        map[r.id] = !(res[index] ?? true);
       });
       setMissing(map);
     });

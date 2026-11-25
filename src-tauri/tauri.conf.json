@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Gruzly",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "identifier": "app.gruzly.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -46,6 +46,9 @@
       "binaries/yt-dlp",
       "binaries/aria2c",
       "binaries/ffmpeg"
+    ],
+    "resources": [
+      "../THIRD_PARTY_NOTICES.md"
     ],
     "icon": [
       "icons/32x32.png",

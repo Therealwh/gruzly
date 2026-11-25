@@ -2,14 +2,17 @@
 // distribution points over HTTPS into src-tauri/binaries/ using the
 // Tauri sidecar naming convention: <name>-<target-triple>[.exe].
 // Idempotent: skips engines that are already present.
-import { copyFileSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
-const BIN_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "src-tauri", "binaries");
+const ROOT_DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
+const BIN_DIR = join(ROOT_DIR, "src-tauri", "binaries");
+const LOCK = JSON.parse(readFileSync(join(ROOT_DIR, "engines.lock.json"), "utf8"));
 const TRIPLE = targetTriple();
 
 function targetTriple() {
@@ -67,6 +70,27 @@ async function download(url, dest) {
   const res = await fetch(url, { redirect: "follow" });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText} for ${url}`);
   await pipeline(Readable.fromWeb(res.body), createWriteStream(dest));
+}
+
+function sha256(path) {
+  return new Promise((resolve, reject) => {
+    const hash = createHash("sha256");
+    const stream = createReadStream(path);
+    stream.on("error", reject);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("end", () => resolve(hash.digest("hex")));
+  });
+}
+
+async function verifyEngineHash(name, path) {
+  const expected = LOCK.engines?.[name]?.sha256;
+  if (!expected || !/^[a-f0-9]{64}$/i.test(expected)) {
+    throw new Error(`missing valid SHA-256 lock for ${name}`);
+  }
+  const actual = await sha256(path);
+  if (actual.toLowerCase() !== expected.toLowerCase()) {
+    throw new Error(`SHA-256 mismatch for ${name}: expected ${expected}, got ${actual}`);
+  }
 }
 
 async function fetchEngine(name, spec, outFile) {
@@ -167,11 +191,13 @@ mkdirSync(BIN_DIR, { recursive: true });
 for (const [name, spec] of Object.entries(SOURCES)) {
   const outFile = join(BIN_DIR, ext(`${name}-${TRIPLE}`));
   if (existsSync(outFile)) {
+    await verifyEngineHash(name, outFile);
     console.log(`[exists] ${name}: ${outFile}`);
     results[name] = "present";
     continue;
   }
   results[name] = (await fetchEngine(name, spec, outFile)) ? "downloaded" : "skipped";
+  if (results[name] !== "skipped") await verifyEngineHash(name, outFile);
 }
 
 // Sanity check: every engine the build script expects must exist on disk.

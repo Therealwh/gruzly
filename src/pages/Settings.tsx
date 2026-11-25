@@ -333,7 +333,12 @@ function DownloadsSection() {
           <div className="flex items-center gap-2">
             <Input
               value={settings.speedLimit}
-              onChange={(e) => settings.update({ speedLimit: e.target.value.trim() })}
+              onChange={(e) => {
+                const value = e.target.value.trim().toUpperCase();
+                if (/^(?:\d+)?[KM]?$/.test(value) && (value === "" || /^\d/.test(value))) {
+                  settings.update({ speedLimit: value });
+                }
+              }}
               placeholder={t("settings.downloads.unlimited")}
               className="w-40 tnum"
               aria-label={t("settings.downloads.speedLimit")}
@@ -352,7 +357,10 @@ function DownloadsSection() {
         <Row label={t("settings.downloads.seedRatio")} hint={t("settings.downloads.seedRatioHint")}>
           <Input
             value={settings.seedRatio}
-            onChange={(e) => settings.update({ seedRatio: e.target.value })}
+            onChange={(e) => {
+              const value = e.target.value;
+              if (/^\d*(\.\d*)?$/.test(value)) settings.update({ seedRatio: value });
+            }}
             className="w-24 tnum"
             aria-label={t("settings.downloads.seedRatio")}
           />

@@ -24,6 +24,10 @@ pub struct AppState {
     pub db: Arc<Db>,
     /// Settings → General → "Close to tray": hide instead of exiting.
     pub close_to_tray: std::sync::atomic::AtomicBool,
+    /// Whether yt-dlp should be updated automatically at startup.
+    pub engine_auto_update: std::sync::atomic::AtomicBool,
+    /// Prevents tray quit and RunEvent::Exit from shutting down twice.
+    pub shutdown_started: std::sync::atomic::AtomicBool,
 }
 
 /// Fire-and-forget yt-dlp self-update at startup: extractors break
@@ -32,9 +36,21 @@ pub struct AppState {
 /// Runs on Tauri's async runtime — setup() has no ambient Tokio context.
 fn schedule_ytdlp_auto_update(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
-        let bundled = core::engines::probe_all(&app)
-            .into_iter()
-            .any(|e| e.id == "yt-dlp" && e.source.as_deref() == Some("bundled"));
+        let enabled = app
+            .state::<AppState>()
+            .engine_auto_update
+            .load(std::sync::atomic::Ordering::SeqCst);
+        if !enabled {
+            log::info!("yt-dlp auto-update disabled in settings");
+            return;
+        }
+        let probe_app = app.clone();
+        let bundled =
+            tauri::async_runtime::spawn_blocking(move || core::engines::probe_all(&probe_app))
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .any(|e| e.id == "yt-dlp" && e.source.as_deref() == Some("bundled"));
         if !bundled {
             log::info!("yt-dlp not bundled; skipping auto-update");
             return;
@@ -44,6 +60,39 @@ fn schedule_ytdlp_auto_update(app: tauri::AppHandle) {
             Err(e) => log::warn!("yt-dlp auto-update failed (non-fatal): {e}"),
         }
     });
+}
+
+/// Graceful shutdown shared by tray quit and Tauri exit.
+async fn shutdown_engines(app: &tauri::AppHandle) {
+    if let Some(state) = app.try_state::<AppState>() {
+        if state
+            .shutdown_started
+            .compare_exchange(
+                false,
+                true,
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+            )
+            .is_err()
+        {
+            return;
+        }
+    }
+    // Stop video engine process trees before releasing the aria2 daemon. The
+    // queue owns the yt-dlp runners, while AppState owns aria2.
+    if let Some(queue) = app.try_state::<QueueManager>() {
+        queue.shutdown_engine_processes().await;
+    }
+    if let Some(state) = app.try_state::<AppState>() {
+        if let Some(daemon) = state.aria2.lock().await.take() {
+            let _ = daemon.shutdown().await;
+        }
+    }
+}
+
+/// Tray-facing shutdown hook; keeps process cleanup in one place.
+pub(crate) async fn shutdown_for_tray(app: &tauri::AppHandle) {
+    shutdown_engines(app).await;
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -98,8 +147,12 @@ pub fn run() {
             commands::check_files_exist,
             commands::clear_history,
             commands::update_ytdlp,
+            commands::prepare_shutdown,
             commands::set_parallel,
             commands::set_speed_limit,
+            commands::set_seed_ratio,
+            commands::set_proxy,
+            commands::set_engine_autoupdate,
             commands::set_job_order,
             commands::set_close_to_tray,
             commands::set_tray_language,
@@ -108,10 +161,19 @@ pub fn run() {
             // Local DB (history) in the app data dir.
             let data_dir = app.path().app_data_dir().expect("app data dir");
             let db = Db::open(&data_dir.join("gruzly.db")).expect("open local db");
+            let db = Arc::new(db);
+            let auto_update = db
+                .get_setting("enginesAutoUpdate")
+                .ok()
+                .flatten()
+                .map(|value| value != "0")
+                .unwrap_or(true);
             app.manage(AppState {
                 aria2: tokio::sync::Mutex::new(None),
-                db: Arc::new(db),
+                db,
                 close_to_tray: std::sync::atomic::AtomicBool::new(true),
+                engine_auto_update: std::sync::atomic::AtomicBool::new(auto_update),
+                shutdown_started: std::sync::atomic::AtomicBool::new(false),
             });
 
             let handle = app.handle().clone();
@@ -160,6 +222,12 @@ pub fn run() {
             });
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Gruzly");
+        .build(tauri::generate_context!())
+        .expect("error while building Gruzly")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                let app = app.clone();
+                tauri::async_runtime::block_on(shutdown_engines(&app));
+            }
+        });
 }

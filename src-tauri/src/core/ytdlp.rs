@@ -299,17 +299,21 @@ pub fn sanitize_output_template(template: &str) -> Result<String, YtdlpError> {
 
 fn base_analysis_args() -> Vec<&'static str> {
     vec![
+        "--ignore-config",
         "--dump-single-json",
         "--no-warnings",
-        "--no-check-certificates",
         "--socket-timeout",
-        "15",
+        "30",
     ]
 }
 
-/// Runs `yt-dlp` and returns parsed stdout JSON.
+/// Runs `yt-dlp` and returns parsed stdout JSON. Output is drained on a
+/// separate thread so a noisy stderr cannot deadlock the child, while the
+/// parent enforces a real wall-clock timeout around the blocking read.
 fn run_ytdlp(binary: &PathBuf, args: &[String]) -> Result<String, YtdlpError> {
     use std::io::Read;
+    use std::sync::mpsc;
+    use std::thread;
 
     let mut cmd = std::process::Command::new(binary);
     #[cfg(windows)]
@@ -324,31 +328,64 @@ fn run_ytdlp(binary: &PathBuf, args: &[String]) -> Result<String, YtdlpError> {
         .stderr(Stdio::piped())
         .spawn()?;
 
-    let mut stdout = child.stdout.take().expect("stdout piped");
+    let stdout = child.stdout.take().expect("stdout piped");
+    let stderr = child.stderr.take().expect("stderr piped");
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut reader = stdout;
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 8192];
+        let result = loop {
+            match reader.read(&mut chunk) {
+                Ok(0) => break Ok(buf),
+                Ok(n) => {
+                    buf.extend_from_slice(&chunk[..n]);
+                    if buf.len() > 64 * 1024 * 1024 {
+                        break Err("output too large".to_string());
+                    }
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => break Err(e.to_string()),
+            }
+        };
+        let _ = tx.send(result);
+    });
+    thread::spawn(move || {
+        let mut reader = stderr;
+        let mut sink = [0u8; 8192];
+        while reader.read(&mut sink).ok().filter(|n| *n > 0).is_some() {}
+    });
+
     let deadline = std::time::Instant::now() + ANALYZE_TIMEOUT;
-    let mut buf = Vec::new();
-    let mut chunk = [0u8; 8192];
-    loop {
-        if std::time::Instant::now() >= deadline {
+    let stdout = loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
             let _ = child.kill();
+            let _ = child.wait();
             return Err(YtdlpError::Timeout);
         }
-        match stdout.read(&mut chunk) {
-            Ok(0) => break,
-            Ok(n) => buf.extend_from_slice(&chunk[..n]),
-            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(e) => return Err(e.into()),
+        match rx.recv_timeout(remaining.min(Duration::from_millis(100))) {
+            Ok(result) => break result.map_err(YtdlpError::Engine)?,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if child.try_wait()?.is_some() {
+                    match rx.recv_timeout(Duration::from_secs(1)) {
+                        Ok(result) => break result.map_err(YtdlpError::Engine)?,
+                        Err(_) => {
+                            return Err(YtdlpError::Engine("yt-dlp output unavailable".into()))
+                        }
+                    }
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(YtdlpError::Engine("yt-dlp output unavailable".into()));
+            }
         }
-        if buf.len() > 64 * 1024 * 1024 {
-            let _ = child.kill();
-            return Err(YtdlpError::Engine("output too large".into()));
-        }
-    }
+    };
     let status = child.wait()?;
     if !status.success() {
         return Err(YtdlpError::Engine(format!("yt-dlp exited with {status}")));
     }
-    Ok(String::from_utf8_lossy(&buf).to_string())
+    Ok(String::from_utf8_lossy(&stdout).to_string())
 }
 
 /// Analyzes a video URL: either a single video with formats or a playlist.
@@ -549,8 +586,15 @@ pub fn download_args(
     };
 
     let mut args: Vec<String> = vec![
+        "--ignore-config".into(),
         "--newline".into(),
         "--no-warnings".into(),
+        "--socket-timeout".into(),
+        "30".into(),
+        "--retries".into(),
+        "5".into(),
+        "--fragment-retries".into(),
+        "10".into(),
         "--no-mtime".into(),
         // Native HLS/DASH downloaders emit no progress events when piped;
         // ffmpeg does (stderr "time=HH:MM:SS.xx"), which the queue parses
@@ -673,6 +717,9 @@ mod tests {
     fn download_args_are_array_and_ordered() {
         let args = download_args(&spec(), None).unwrap();
         assert!(args.iter().all(|a| !a.contains(" && ")));
+        assert!(args.iter().any(|a| a == "--ignore-config"));
+        assert!(args.iter().any(|a| a == "--retries"));
+        assert!(args.iter().any(|a| a == "--fragment-retries"));
         assert_eq!(*args.last().unwrap(), "https://youtu.be/x");
         // progress template must be the value after its flag
         let idx = args

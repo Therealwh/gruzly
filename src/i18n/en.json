@@ -61,6 +61,7 @@
       "completed": "Completed",
       "failed": "Failed",
       "canceled": "Canceled",
+      "interrupted": "Interrupted",
       "seeding": "Seeding"
     },
     "emptyTitle": "Nothing here yet",
@@ -327,7 +328,7 @@
       "speedLimit": "Speed limit",
       "unlimited": "Unlimited",
       "filenameTemplate": "Filename template",
-      "templateHint": "Available variables: {{title}}, {{uploader}}, {{id}}, {{date}}",
+      "templateHint": "Available variables: %(title)s, %(uploader)s, %(id)s, %(upload_date)s",
       "seedRatio": "Stop seeding at ratio",
       "seedRatioHint": "0 — seed indefinitely"
     },

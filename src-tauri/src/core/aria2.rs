@@ -50,6 +50,7 @@ impl Aria2Daemon {
             "--enable-rpc".into(),
             "--rpc-listen-all=false".into(),
             format!("--rpc-listen-port={port}"),
+            format!("--rpc-secret={secret}"),
             format!("--dir={}", download_dir.to_string_lossy()),
             "--continue".into(),
             // A finished/aborted file without its control file cannot be
@@ -64,9 +65,8 @@ impl Aria2Daemon {
             "--summary-interval=0".into(),
             "--auto-save-interval=30".into(),
             "--enable-dht=true".into(),
-            // Stop seeding once we've uploaded as much as we downloaded:
-            // then aria2 reports "complete" and the task settles.
-            "--seed-ratio=1.0".into(),
+            // Match Settings → Downloads default: 0 means seed indefinitely.
+            "--seed-ratio=0".into(),
             // NOTE: do NOT pass --listen-port=0 — aria2 requires 1024..65535
             // and would exit immediately (the "0 reactions" bug). The default
             // 6881-6999 range is fine: aria2 skips busy ports itself.
@@ -79,12 +79,12 @@ impl Aria2Daemon {
         let child = cmd
             .args(&args)
             .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            // Do not leave a piped stderr unread: aria2 can block once the
+            // pipe fills during retries or peer errors.
+            .stderr(std::process::Stdio::null())
             .kill_on_drop(true)
             .spawn()?;
-
-        let _ = &args;
 
         let daemon = Arc::new(Aria2Daemon {
             child: Mutex::new(child),
@@ -101,26 +101,10 @@ impl Aria2Daemon {
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        // The daemon is dead or deaf — surface its stderr tail so the
-        // user (and we) see WHY instead of a bare timeout.
         let mut guard = daemon.child.lock().await;
-        let exited = guard.try_wait().ok().flatten().is_some();
-        let mut stderr_tail: Option<String> = None;
-        if exited {
-            if let Some(mut s) = guard.stderr.take() {
-                use tokio::io::AsyncReadExt as _;
-                let mut buf = Vec::new();
-                let _ = s.read_to_end(&mut buf).await;
-                let text = String::from_utf8_lossy(&buf).to_string();
-                let tail: String = text.chars().rev().take(400).collect();
-                let tail = tail.chars().rev().collect::<String>();
-                if !tail.trim().is_empty() {
-                    stderr_tail = Some(tail);
-                }
-            }
-        }
         let _ = guard.start_kill();
-        let detail = stderr_tail.unwrap_or_else(|| "RPC did not answer in 2s".to_string());
+        let _ = guard.wait().await;
+        let detail = "RPC did not answer in 2s".to_string();
         log::error!("aria2 daemon failed to start: {detail}");
         Err(Aria2Error::Rpc(detail))
     }
@@ -284,6 +268,24 @@ impl Aria2Daemon {
         self.rpc("changePosition", self.authed(json!([gid, pos, "pos"])))
             .await
             .map(|_| ())
+    }
+
+    /// Gracefully asks aria2 to persist/stop all work, then always waits or
+    /// force-kills the child even when the RPC endpoint is already broken.
+    pub async fn shutdown(&self) -> Result<(), Aria2Error> {
+        let rpc_result = self.rpc("shutdown", self.authed(json!([]))).await;
+        let mut child = self.child.lock().await;
+        let wait_result = tokio::time::timeout(Duration::from_secs(3), child.wait()).await;
+        match wait_result {
+            Ok(result) => {
+                result.map(|_| ()).map_err(Aria2Error::Io)?;
+            }
+            Err(_) => {
+                let _ = child.start_kill();
+                let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
+            }
+        }
+        rpc_result.map(|_| ())
     }
 
     pub async fn force_remove(&self, gid: &str) -> Result<(), Aria2Error> {

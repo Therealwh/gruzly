@@ -72,7 +72,7 @@ FFmpeg are bundled, nothing else to install:
 | `Gruzly_<ver>_amd64.deb` / `.AppImage` | Linux (deb pulls `aria2` from repos) |
 | `Gruzly_aarch64.app.tar.gz` | macOS (Apple Silicon) |
 
-Windows 10+ includes WebView2 automatically. macOS/Linux builds come from CI.
+Windows 10+ includes WebView2 automatically. The current macOS artifact targets Apple Silicon; Linux artifacts target x86_64 and require the documented system packages for the deb build. Sidecar versions are pinned in `engines.lock.json`; update them only with a reviewed hash/source change.
 
 ## ⚡ Quick start
 
@@ -143,8 +143,8 @@ All shortcuts are remappable in Settings → Hotkeys.
 - [x] Files & torrents via aria2 with per-file selection (v0.1.0)
 - [x] Signed self-updates (v0.1.1)
 - [x] Aria2 reliability fixes from field testing (v0.1.2)
-- [ ] Tray menu & close-to-tray wiring
-- [ ] Drag-and-drop queue priorities
+- [x] Tray menu & close-to-tray wiring
+- [x] Drag-and-drop queue priorities
 - [ ] Per-domain preset auto-apply
 - [ ] Browser extension: catch video URLs mid-browse
 - [ ] `gruzly <url>` CLI

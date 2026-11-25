@@ -61,6 +61,7 @@
       "completed": "Завершено",
       "failed": "Ошибка",
       "canceled": "Отменено",
+      "interrupted": "Прервано",
       "seeding": "Раздача"
     },
     "emptyTitle": "Пока пусто",
@@ -333,7 +334,7 @@
       "speedLimit": "Лимит скорости",
       "unlimited": "Без лимита",
       "filenameTemplate": "Шаблон имени файла",
-      "templateHint": "Доступны переменные: {{title}}, {{uploader}}, {{id}}, {{date}}",
+      "templateHint": "Доступны переменные: %(title)s, %(uploader)s, %(id)s, %(upload_date)s",
       "seedRatio": "Останавливать раздачу при ратио",
       "seedRatioHint": "0 — раздавать бесконечно"
     },

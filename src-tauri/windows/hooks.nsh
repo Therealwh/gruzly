@@ -5,6 +5,5 @@
 !macro NSIS_HOOK_PREINSTALL
   DetailPrint "Stopping running Gruzly processes..."
   nsExec::Exec 'taskkill /IM "Gruzly.exe" /F /T'
-  nsExec::Exec 'taskkill /IM "aria2c.exe" /F /T'
   Sleep 500
 !macroend

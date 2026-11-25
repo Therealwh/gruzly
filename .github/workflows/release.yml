@@ -6,16 +6,38 @@ on:
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   quality:
     name: Lint · Typecheck · Tests
     uses: ./.github/workflows/quality.yml
 
+  create-release:
+    name: Create GitHub release
+    needs: quality
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - id: meta
+        shell: bash
+        run: echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+      - name: Create release once
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Gruzly $GITHUB_REF_NAME" \
+            --notes "See CHANGELOG.md for release notes. Download only content you own or have permission to save. Gruzly does not support or circumvent DRM." \
+            --verify-tag
+
   build:
     name: Build & Publish (${{ matrix.os }})
-    needs: quality
+    needs: create-release
     permissions:
       contents: write
     strategy:
@@ -24,13 +46,13 @@ jobs:
         include:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            bundle_args: "--bundles nsis,msi"
+            bundle_args: "--target x86_64-pc-windows-msvc --bundles nsis,msi"
           - os: macos-latest
             target: aarch64-apple-darwin
-            bundle_args: "--bundles app"
+            bundle_args: "--target aarch64-apple-darwin --bundles app"
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            bundle_args: "--bundles deb,appimage"
+            bundle_args: "--target x86_64-unknown-linux-gnu --bundles deb,appimage"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -44,25 +66,18 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-      - name: Install Linux dependencies (webkit2gtk, aria2)
+      - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libudev-dev aria2
-      - name: Install macOS dependencies (aria2, ffmpeg)
+      - name: Install macOS dependencies
         if: runner.os == 'macOS'
         run: brew install aria2 ffmpeg
+      - run: npm ci
       - name: Fetch sidecar engines
         run: npm run engines:fetch
-      - run: npm ci
-      - name: Ensure release exists (avoids create-race between OS jobs)
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||             gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY"               --title "Gruzly ${{ github.ref_name }}"               --notes "Download only content you own or have permission to save."
-      - name: Build, sign & publish release
+      - name: Build, sign and publish release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -70,22 +85,17 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           args: ${{ matrix.bundle_args }}
-          includeUpdaterArtifacts: true
           tagName: ${{ github.ref_name }}
           releaseName: "Gruzly ${{ github.ref_name }}"
-          releaseBody: "Download only content you own or have permission to save. Gruzly does not support or circumvent DRM."
+          releaseBody: "See CHANGELOG.md. Download only content you own or have permission to save. Gruzly does not support or circumvent DRM."
           releaseDraft: false
           prerelease: false
+          includeUpdaterJson: true
+          updaterJsonPreferNsis: true
       - name: Assemble portable (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $out = "portable/Gruzly-portable-win64"
-          New-Item -ItemType Directory -Force -Path $out | Out-Null
-          Copy-Item src-tauri/target/release/gruzly.exe $out/
-          Copy-Item src-tauri/target/release/*.exe $out/ -Exclude gruzly.exe
-          Compress-Archive -Path $out/* -DestinationPath portable/Gruzly-portable-win64.zip -Force
-      - name: Upload portable to release
+        run: npm run package:portable
+      - name: Upload portable (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         env:

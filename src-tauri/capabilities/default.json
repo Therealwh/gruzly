@@ -20,24 +20,6 @@
     "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-write-text",
     "notification:default",
-    "shell:allow-execute",
-    {
-      "identifier": "shell:allow-spawn",
-      "allow": [
-        {
-          "name": "binaries/yt-dlp",
-          "sidecar": true
-        },
-        {
-          "name": "binaries/aria2c",
-          "sidecar": true
-        },
-        {
-          "name": "binaries/ffmpeg",
-          "sidecar": true
-        }
-      ]
-    },
     "store:default",
     "global-shortcut:allow-register",
     "global-shortcut:allow-unregister",

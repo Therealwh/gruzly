@@ -3,206 +3,95 @@
 All notable changes to Gruzly are documented here. Format: Keep a Changelog,
 versioning: SemVer.
 
-## [0.2.0] — 2026-11-23
+## [0.3.1] — 2026-11-26
 
 ### Fixed
-- Restored (after restart) downloads carried an outdated format selector
-  that could pick HLS streams with no progress reporting — the selector is
-  now reset to the protocol-aware default.
-- "Open folder" is available for active tasks too, not only finished ones.
+- Secured aria2 JSON-RPC with a per-launch secret and added an authenticated smoke test.
+- Added graceful shutdown for aria2 and yt-dlp process trees, including updater handoff and tray quit.
+- Fixed queued pause/cancel behavior, Gate permit loss, duplicate runner tracking, and file/torrent slot handling.
+- Added persistent history status filtering, Unicode search migration, torrent payload/depth limits, and file/torrent history creation at add time.
+- Added real settings commands for parallelism, seed ratio, speed reset, proxy, and yt-dlp auto-update persistence.
+- Hardened yt-dlp arguments, retries, timeouts, output reading, and updater serialization.
 
-### Changed
-- Torrent adds now say "pick the files in the selection window" instead of
-  "download started"; the latter appears only after files are confirmed.
-- Completed downloads show a visible in-app toast with the title on top of
-  the system notification.
-
-## [0.1.9] — 2026-11-23
-
-### Fixed
-- YouTube/HLS downloads showed "0 KB" forever while files grew: the native
-  m3u8/DASH downloader emits no progress-template events. Format selection
-  now prefers direct HTTP formats (verified: 559 progress events vs 0) and
-  falls back to HLS only when nothing else exists — in that case the task
-  row streams the engine's own status lines instead of freezing.
-- Torrent re-downloads over an existing file aborted with "control file
-  does not exist": the daemon now runs with --allow-overwrite=true and
-  --auto-file-renaming=false (known aria2 behavior, issue #1542).
-- Non-JSON engine output streams into the task row as live activity.
+### Security and packaging
+- Removed frontend shell execute/spawn permissions and global aria2 process killing from NSIS.
+- Added pinned engine metadata and third-party notices; updater and release workflow checks were tightened.
 
 ## [0.3.0] — 2026-11-23
 
 ### Added — full persistent download history
-- Every download creates a history record at ADD time (not only on
-  completion); status transitions patch the same record, so nothing is
-  duplicated or lost.
-- Records keep: URL, title, thumbnail, kind (video/file/torrent), selected
-  format, save path, size, engine, added/started/finished timestamps, final
-  status and error text.
-- Restart handling: unfinished (queued/downloading/merging) history rows are
-  marked "interrupted" — never "completed". Unfinished video downloads also
-  restore as paused tasks (Resume continues, data where the engine supports
-  it).
-- History UI: thumbnails, status and type filters, search, date sorting,
-  "File not found" badges for records whose save path disappeared, and
-  per-record actions: open file, open folder, copy link, re-download,
-  delete record.
-- Deleting a history record never deletes the downloaded file; clearing
-  history never touches files.
-
-### Technical
-- SQLite migration to user_version=2: history gains thumbnail, format,
-  save_path, started_at, error columns (ALTER — no data loss).
-- History is upserted/patched id-keyed: no duplicate rows on repeated
-  status transitions; concurrent downloads safe (single-writer connection,
-  spawn_blocking).
-- The DB path is unchanged: app_data_dir/gruzly.db — updates do not touch it.
+- Every download creates a history record at ADD time (not only on completion); status transitions patch the same record.
+- Records keep URL, title, thumbnail, kind, selected format, save path, size, engine, lifecycle timestamps, final status and error text.
+- History UI includes thumbnails, status/type/date filters, search, sorting, file checks and per-record actions.
+- Unfinished video downloads restore as paused tasks after restart.
 
 ## [0.2.1] — 2026-11-23
 
 ### Fixed
-- HLS downloads (YouTube dubbed tracks, m3u8-only sources) showed "0 KB"
-  with a frozen bar: the native HLS downloader emits no progress events
-  when piped. m3u8 downloads are now routed to FFmpeg, whose time=
-  output is parsed against the video duration into a real progress bar.
-  Verified against a live m3u8 download (70 progress lines, 144p/360p).
-- Cookie files: cookies.txt support added (Settings → Integrations) and
-  Chrome-database errors now explain the fix. A cookies.txt file takes
-  priority over --cookies-from-browser.
+- HLS downloads are routed through FFmpeg so progress is visible.
+- Cookie files are supported and take priority over browser cookie extraction.
 
-### Added
-- Cookies validation (existing .txt file) with tests.
+## [0.2.0] — 2026-11-23
+
+### Fixed
+- Restored downloads reset outdated format selectors that could choose progress-less HLS streams.
+- Open-folder is available for active tasks.
+
+### Changed
+- Torrent adds open the file-selection flow before reporting download start.
+- Completed downloads show an in-app toast and system notification.
+
+## [0.1.9] — 2026-11-23
+
+### Fixed
+- Protocol-aware format selection prevents YouTube/HLS progress from freezing.
+- aria2 overwrite and control-file handling was corrected.
+- Non-JSON engine output is shown as live queue activity.
 
 ## [0.1.8] — 2026-11-22
 
 ### Fixed
-- Torrent downloads from magnet links stalled after metadata: aria2 moves
-  the real download to a new task (followedBy) and the queue settled the
-  job early — now the queue follows the chain, so data actually downloads.
-- Progress could silently read as "0 KB, no bar": the yt-dlp progress
-  parser expected camelCase keys while yt-dlp emits snake_case
-  (regression tests added).
-
-### Added
-- Queue persistence: unfinished video downloads are saved to SQLite and
-  restored as paused tasks after an app restart — press Resume to continue.
-- Torrent end-to-end test against a real daemon and public torrent
-  (metadata → file selection → unpause → data).
+- Magnet metadata transitions now follow aria2 `followedBy` tasks.
+- yt-dlp snake_case progress fields are parsed correctly.
 
 ## [0.1.7] — 2026-11-22
 
 ### Fixed
-- Critical: the aria2 daemon could be killed by a concurrent launch race —
-  two "add" actions racing spawned two daemons, one replaced the other and
-  kill-on-drop killed the live one, leaving the UI hanging on dead RPC
-  (the "torrent shows 100% / nothing on disk" family). The state lock is
-  now held across the spawn.
-- No phantom torrents: stale session persistence is dropped, so tasks from
-  a previous run never resume outside the queue.
-- Live engine status in the queue: yt-dlp progress lines (webpage, formats,
-  fragments) stream into the task row instead of a frozen "Downloading".
-- When YouTube asks to sign in, the row explains the fix (enable browser
-  cookies in Settings → Integrations).
+- Concurrent aria2 startup no longer kills the live daemon.
+- Stale sessions do not create phantom downloads.
+- yt-dlp activity and sign-in guidance are visible in the queue.
 
 ## [0.1.6] — 2026-11-22
 
 ### Added
-- Drag-and-drop queue priorities: reorder tasks in Downloads and the gate
-  grants slots in that order; aria2 waiting tasks are repositioned via
-  changePosition so the real download order follows the UI.
+- Drag-and-drop queue priorities and aria2 position updates.
 
 ## [0.1.5] — 2026-11-22
 
 ### Fixed
-- Torrents at 100% showed "Downloading" forever: BitTorrent tasks keep
-  `active` while seeding. Seeding now has its own status (with upload speed),
-  and the default seed ratio is 1.0 so tasks settle to Completed.
-- Torrent titles show the real release name (from the metadata) in the queue
-  and history instead of a generic "Torrent".
-- Video downloads of Cyrillic titles were saved as underscore-mangled names:
-  `--restrict-filenames` is dropped, files keep readable names.
-- Startup white screen: the window now appears once the UI has rendered
-  (with a 6 s safety timer).
+- Torrent seeding status, readable Cyrillic filenames, real torrent titles and hidden startup window.
 
 ## [0.1.4] — 2026-11-22
 
 ### Added
-- System tray with a context menu: Open Gruzly, Pause all, Resume all,
-  Quit. Left click opens the window. Menu labels follow the UI language.
-- Close-to-tray: closing the window keeps downloads running (Settings →
-  General → "Close to tray", on by default).
-- Run-at-startup toggle wired to the system autostart plugin.
-- System notifications when a download completes or fails (Settings-gated).
-- Windows installer now stops running Gruzly processes before extracting
-  files, so updating over a running instance no longer fails with
-  "Error opening file for writing".
+- Tray menu, close-to-tray, autostart and notifications.
 
 ## [0.1.3] — 2026-11-22
 
 ### Fixed
-- Torrents: re-adding a torrent that already exists in the session no longer
-  fails — the existing task is picked up (file selection modal opens again,
-  active tasks are reported instead of being duplicated). Info-hash is
-  computed from magnet links and `.torrent` payloads (bencode + SHA-1).
-- Completed downloads clean up stale `<file>.aria2` control files left by a
-  previously killed daemon.
-- Video downloads of fragmented streams (HLS/DASH) now show total size and a
-  real progress bar — the total is derived from fragment progress when
-  yt-dlp does not report it up front.
+- Torrent duplicate detection, info-hash handling and stale control-file cleanup.
 
 ## [0.1.2] — 2026-11-22
 
 ### Fixed
-- Critical: file/torrent downloads did nothing — the aria2 daemon was spawned
-  with an invalid `--listen-port=0` and exited instantly, so the RPC never came
-  up ("0 reactions" on paste/torrent). The flag is dropped; the daemon now
-  reports its stderr tail if it ever fails to start.
-- Error toasts on failed adds now include the engine's message.
+- aria2 startup no longer uses the invalid port zero configuration.
 
 ## [0.1.1] — 2026-11-22
 
 ### Fixed
-- Windows: engine processes no longer flash a console window (CREATE_NO_WINDOW
-  on every spawn: probes, yt-dlp analysis/downloads, aria2 daemon, updater).
-- "Open folder" now works — opener plugin got a path scope; failures surface
-  as a toast instead of being swallowed.
-- Download folder setting now applies to files and torrents too (aria2 gets
-  the `dir` option), not only to video downloads.
-- Settings → Downloads gained the download-folder picker (same setting as in
-  General) and shows a clear i18n tooltip for the command-palette button.
-
-### Added
-- deb package declares `aria2` dependency; Linux builds ship an exec-shim
-  when no prebuilt binary exists.
+- Windows engine console flashing, open-folder behavior and download-folder propagation.
 
 ## [0.1.0] — 2026-11-22
 
-First MVP.
-
-### Added
-- Video engine (yt-dlp sidecar): link analysis (`--dump-single-json`), preview
-  modal with in-app player embeds (YouTube-nocookie, Rutube, VK, OK, Bilibili),
-  format table (quality/fps/codec/size/HDR), presets (Best/1080p/720p/Audio
-  mp3/m4a), subtitle selection, playlist batch downloads.
-- Files & torrents engine (aria2 sidecar): HTTP/FTP with up to 16 connections,
-  resume, magnet links, local/URL .torrent with per-file selection modal.
-- Unified queue: progress (throttled ≤4 events/s), pause/resume/cancel/retry,
-  parallel-download gate (1–16), global speed limit (live via aria2
-  changeGlobalOption), virtualized list for 1000+ tasks.
-- History: SQLite (WAL) storage, search, type/date filters, redownload, CSV export.
-- Presets CRUD with default preset and per-domain auto-apply data model.
-- Settings: appearance (dark/light/system, accents, density, RU/EN), downloads,
-  engines (versions + update), integrations (browser cookies, SponsorBlock,
-  proxy), remappable hotkeys.
-- Command palette (Ctrl+K) with navigation and queue/engine actions.
-- Engine self-healing: yt-dlp `--update` at launch (bundled copies only).
-- Frameless window with custom titlebar, tray-ready architecture.
-- CI: lint + typecheck + vitest + clippy + cargo test + 3-OS builds with
-  installers and portable zip.
-
-### Security
-- Rust-side validation of every engine argument source: URL schemes, magnet
-  prefixes, cookies-browser allowlist, output-template sanitization
-  (see SECURITY_REVIEW.md).
-- aria2 RPC: per-launch CSPRNG secret, loopback-only, never logged.
-- CSP with embed-domain allowlist; no `assetProtocol`.
+First MVP: video preview/downloads, HTTP/FTP/torrents, unified queue, history,
+settings, themes, localization, updater and CI builds.

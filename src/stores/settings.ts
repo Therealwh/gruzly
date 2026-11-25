@@ -1,5 +1,12 @@
 import { create } from "zustand";
-import { setCloseToTray, setParallel, setSpeedLimit } from "@/lib/api";
+import {
+  setCloseToTray,
+  setEngineAutoUpdate,
+  setParallel,
+  setProxy,
+  setSeedRatio,
+  setSpeedLimit,
+} from "@/lib/api";
 
 /** Browser-selectable cookie sources (yt-dlp --cookies-from-browser). */
 export const BROWSERS = ["Chrome", "Firefox", "Edge", "Brave", "Chromium", "Opera", "Vivaldi"] as const;
@@ -86,6 +93,20 @@ function pushBackend(next: Settings, prev: Settings): void {
   if (next.speedLimit !== prev.speedLimit) {
     void setSpeedLimit(next.speedLimit).catch(() => {/* browser mode */});
   }
+  if (next.seedRatio !== prev.seedRatio) {
+    void setSeedRatio(next.seedRatio).catch(() => {/* browser mode */});
+  }
+  if (
+    next.proxyEnabled !== prev.proxyEnabled ||
+    next.proxyType !== prev.proxyType ||
+    next.proxyHost !== prev.proxyHost ||
+    next.proxyPort !== prev.proxyPort
+  ) {
+    void setProxy(proxyUrl(next) ?? "").catch(() => {/* browser mode */});
+  }
+  if (next.enginesAutoUpdate !== prev.enginesAutoUpdate) {
+    void setEngineAutoUpdate(next.enginesAutoUpdate).catch(() => {/* browser mode */});
+  }
   if (next.closeToTray !== prev.closeToTray) {
     void setCloseToTray(next.closeToTray).catch(() => {/* browser mode */});
   }
@@ -108,6 +129,9 @@ export const useSettingsStore = create<Settings & SettingsActions>((set, get) =>
     // non-fatal — in a plain browser these IPC calls do not exist).
     await setCloseToTray(s.closeToTray).catch(() => undefined);
     await setParallel(s.parallel).catch(() => undefined);
-    if (s.speedLimit) await setSpeedLimit(s.speedLimit).catch(() => undefined);
+    await setSpeedLimit(s.speedLimit).catch(() => undefined);
+    await setSeedRatio(s.seedRatio).catch(() => undefined);
+    await setProxy(proxyUrl(s) ?? "").catch(() => undefined);
+    await setEngineAutoUpdate(s.enginesAutoUpdate).catch(() => undefined);
   },
 }));

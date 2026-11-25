@@ -50,11 +50,11 @@ export function formatEta(seconds: number, locale: Locale = currentLocale): stri
   if (!Number.isFinite(seconds) || seconds <= 0) return "";
   const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "always", style: "narrow" });
   if (seconds < 60) return rtf.format(Math.ceil(seconds), "second");
-  if (seconds < 3600) return rtf.format(-Math.ceil(seconds / 60), "minute").replace(/^-/, "");
+  if (seconds < 3600) return rtf.format(Math.ceil(seconds / 60), "minute");
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.round((seconds % 3600) / 60);
-  const hLabel = rtf.format(-hours, "hour").replace(/^-/, "");
-  return minutes > 0 ? `${hLabel} ${rtf.format(-minutes, "minute").replace(/^-/, "")}` : hLabel;
+  const hLabel = rtf.format(hours, "hour");
+  return minutes > 0 ? `${hLabel} ${rtf.format(minutes, "minute")}` : hLabel;
 }
 
 /** 12 May 2026, 14:03 */

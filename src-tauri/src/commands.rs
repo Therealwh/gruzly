@@ -177,13 +177,15 @@ pub async fn list_history(
     state: State<'_, AppState>,
     query: Option<String>,
     kind: Option<String>,
+    status: Option<String>,
     since_ms: Option<i64>,
 ) -> CmdResult<Vec<HistoryRecord>> {
     let db = state.db.clone();
     let query = query.unwrap_or_default();
     let kind = kind.unwrap_or_else(|| "all".into());
+    let status = status.unwrap_or_else(|| "all".into());
     tokio::task::spawn_blocking(move || {
-        db.list_history(&query, &kind, since_ms, 1000)
+        db.list_history(&query, &kind, &status, since_ms, 1000)
             .map_err(|e| CommandError::of("db", e.to_string()))
     })
     .await
@@ -222,6 +224,19 @@ pub async fn clear_history(state: State<'_, AppState>) -> CmdResult<u32> {
 }
 
 #[tauri::command]
+pub async fn prepare_shutdown(
+    app: tauri::AppHandle,
+    queue: State<'_, QueueManager>,
+) -> CmdResult<()> {
+    // The updater may fail and leave the current app running. Pause jobs so
+    // their resumable state is persisted, but keep engines alive until the
+    // updater hands off to relaunch; the normal Exit path shuts them down.
+    queue::pause_all_jobs(app, queue.clone()).await;
+    queue.wait_for_video_pause().await;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn update_ytdlp(app: tauri::AppHandle) -> CmdResult<String> {
     queue::update_ytdlp(app)
         .await
@@ -229,8 +244,12 @@ pub async fn update_ytdlp(app: tauri::AppHandle) -> CmdResult<String> {
 }
 
 #[tauri::command]
-pub async fn set_parallel(queue: State<'_, QueueManager>, n: u32) -> CmdResult<()> {
-    queue::set_parallel(queue, n)
+pub async fn set_parallel(
+    app: tauri::AppHandle,
+    queue: State<'_, QueueManager>,
+    n: u32,
+) -> CmdResult<()> {
+    queue::set_parallel(app, queue, n)
         .await
         .map_err(|e| CommandError::of("settings", e))
 }
@@ -264,4 +283,32 @@ pub async fn set_speed_limit(app: tauri::AppHandle, limit: String) -> CmdResult<
     queue::set_speed_limit(app, limit)
         .await
         .map_err(|e| CommandError::of("settings", e))
+}
+
+#[tauri::command]
+pub async fn set_seed_ratio(app: tauri::AppHandle, ratio: String) -> CmdResult<()> {
+    queue::set_seed_ratio(app, ratio)
+        .await
+        .map_err(|e| CommandError::of("settings", e))
+}
+
+#[tauri::command]
+pub async fn set_proxy(app: tauri::AppHandle, proxy: String) -> CmdResult<()> {
+    queue::set_proxy(app, proxy)
+        .await
+        .map_err(|e| CommandError::of("settings", e))
+}
+
+#[tauri::command]
+pub async fn set_engine_autoupdate(state: State<'_, AppState>, enabled: bool) -> CmdResult<()> {
+    state
+        .engine_auto_update
+        .store(enabled, std::sync::atomic::Ordering::SeqCst);
+    let db = state.db.clone();
+    tokio::task::spawn_blocking(move || {
+        db.set_setting("enginesAutoUpdate", if enabled { "1" } else { "0" })
+    })
+    .await
+    .map_err(|e| CommandError::of("settings", e.to_string()))?
+    .map_err(|e| CommandError::of("settings", e.to_string()))
 }

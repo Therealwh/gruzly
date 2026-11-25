@@ -1,6 +1,7 @@
 import { ExternalLink, Info, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { Badge, Button } from "@/components/ui";
 import { BrandMark } from "@/components/layout/Sidebar";
 import { getAppInfo, type AppInfo } from "@/lib/api";
@@ -9,7 +10,7 @@ import { useUpdateStore } from "@/stores/update";
 const ENGINES = [
   { id: "yt-dlp", license: "Unlicense", url: "https://github.com/yt-dlp/yt-dlp" },
   { id: "aria2", license: "GPL-2.0", url: "https://github.com/aria2/aria2" },
-  { id: "ffmpeg", license: "LGPL-2.1", url: "https://ffmpeg.org" },
+  { id: "ffmpeg", license: "GPL-2.0-or-later", url: "https://ffmpeg.org" },
 ];
 
 export function About() {
@@ -70,15 +71,14 @@ export function About() {
         <ul className="mt-3 flex flex-col gap-1.5">
           {ENGINES.map((e) => (
             <li key={e.id} className="flex h-9 items-center justify-between rounded-lg border border-border bg-surface-2 px-3">
-              <a
-                href={e.url}
-                target="_blank"
-                rel="noreferrer"
+              <button
+                type="button"
+                onClick={() => void openUrl(e.url)}
                 className="text-xs font-medium text-accent-text hover:underline"
                 data-selectable
               >
                 {e.id}
-              </a>
+              </button>
               <span className="text-2xs text-text-muted">{e.license}</span>
             </li>
           ))}
@@ -86,16 +86,15 @@ export function About() {
       </section>
 
       <p className="mt-6 text-2xs text-text-disabled">{t("about.license")}</p>
-      <a
-        href="https://github.com/gruzly/gruzly"
-        target="_blank"
-        rel="noreferrer"
+      <button
+        type="button"
+        onClick={() => void openUrl("https://github.com/Therealwh/gruzly")}
         className="mt-2 flex items-center gap-1.5 text-2xs text-text-muted transition-colors hover:text-text-secondary"
         data-selectable
       >
         <ExternalLink className="h-3.5 w-3.5" aria-hidden />
         {t("about.repo")}
-      </a>
+      </button>
     </div>
   );
 }

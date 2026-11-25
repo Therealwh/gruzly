@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -19,6 +20,11 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::{Mutex, Notify};
+
+static YTDLP_UPDATE_LOCK: Mutex<()> = Mutex::const_new(());
+
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 
 use super::aria2::Aria2Daemon;
 use super::db::HistoryRecord;
@@ -124,6 +130,8 @@ struct Job {
     kill: Arc<Notify>,
     pause_requested: AtomicBool,
     cancel_requested: AtomicBool,
+    /// Torrent metadata is held paused until the file-selection modal confirms.
+    torrent_selected: AtomicBool,
     created_at: i64,
 }
 
@@ -153,9 +161,14 @@ fn now_ms() -> i64 {
 /// Resizable parallelism gate (tokio Semaphore cannot resize) that grants
 /// slots in display-order: the queued job with the smallest pending rank
 /// starts next, so drag-and-drop priorities control launch order.
+struct GateState {
+    limit: u32,
+    in_use: u32,
+    pending: Vec<(u64, usize)>, // (token, rank)
+}
+
 pub struct Gate {
-    slots: Mutex<u32>,
-    pending: Mutex<Vec<(u64, usize)>>, // (token, rank)
+    state: StdMutex<GateState>,
     next_token: std::sync::atomic::AtomicU64,
     notify: Notify,
 }
@@ -163,59 +176,65 @@ pub struct Gate {
 impl Gate {
     fn new(initial: u32) -> Self {
         Self {
-            slots: Mutex::new(initial.max(1)),
-            pending: Mutex::new(Vec::new()),
+            state: StdMutex::new(GateState {
+                limit: initial.max(1),
+                in_use: 0,
+                pending: Vec::new(),
+            }),
             next_token: std::sync::atomic::AtomicU64::new(0),
             notify: Notify::new(),
         }
     }
 
     /// Registers a waiting job and returns its ticket token.
-    async fn register(&self, rank: usize) -> u64 {
+    fn register(&self, rank: usize) -> u64 {
         let token = self
             .next_token
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        self.pending.lock().await.push((token, rank));
+        self.state
+            .lock()
+            .expect("gate lock")
+            .pending
+            .push((token, rank));
         self.notify.notify_one();
         token
     }
 
-    /// Blocks until a slot is granted to this token (lowest rank first).
-    async fn acquire(&self, token: u64, _rank: usize) {
-        loop {
-            let granted = {
-                let slots = self.slots.lock().await;
-                let pending = self.pending.lock().await;
-                *slots > 0
-                    && pending
-                        .iter()
-                        .min_by_key(|(_t, r)| *r)
-                        .map(|(t, _)| *t == token)
-                        .unwrap_or(false)
-            };
-            if granted {
-                {
-                    let mut slots = self.slots.lock().await;
-                    *slots -= 1;
-                }
-                self.pending.lock().await.retain(|(t, _)| *t != token);
-                self.notify.notify_one(); // re-evaluate ranks after reorder
-                return;
-            }
-            self.notify.notified().await;
+    fn try_acquire(&self, token: u64) -> bool {
+        let mut state = self.state.lock().expect("gate lock");
+        let is_next = state
+            .pending
+            .iter()
+            .min_by_key(|(_, rank)| *rank)
+            .map(|(candidate, _)| *candidate == token)
+            .unwrap_or(false);
+        if !is_next || state.in_use >= state.limit {
+            return false;
         }
+        state.in_use += 1;
+        state.pending.retain(|(candidate, _)| *candidate != token);
+        self.notify.notify_one();
+        true
     }
 
-    fn release(&self) {
-        if let Ok(mut slots) = self.slots.try_lock() {
-            *slots = slots.saturating_add(1);
-        }
+    fn cancel(&self, token: u64) {
+        self.state
+            .lock()
+            .expect("gate lock")
+            .pending
+            .retain(|(candidate, _)| *candidate != token);
         self.notify.notify_one();
     }
 
-    async fn set_limit(&self, n: u32) {
-        let mut slots = self.slots.lock().await;
-        *slots = n.max(1);
+    fn release(&self) {
+        let mut state = self.state.lock().expect("gate lock");
+        state.in_use = state.in_use.saturating_sub(1);
+        drop(state);
+        self.notify.notify_one();
+    }
+
+    fn set_limit(&self, n: u32) {
+        self.state.lock().expect("gate lock").limit = n.max(1);
         self.notify.notify_one();
     }
 }
@@ -232,18 +251,43 @@ impl Drop for GateGuard {
 }
 
 impl GateGuard {
-    /// Registers with the job's display rank, waits for a slot in order.
-    async fn acquire_rank(gate: Arc<Gate>, rank: usize) -> Self {
-        let token = gate.register(rank).await;
-        gate.acquire(token, rank).await;
-        Self { gate }
+    /// Registers with the job's display rank, waits in order, and removes its
+    /// ticket when pause/cancel arrives while still queued.
+    async fn acquire_rank(gate: Arc<Gate>, rank: usize, job: &Job) -> Option<Self> {
+        let token = gate.register(rank);
+        loop {
+            if job.pause_requested.load(Ordering::SeqCst)
+                || job.cancel_requested.load(Ordering::SeqCst)
+            {
+                gate.cancel(token);
+                return None;
+            }
+            let gate_wake = gate.notify.notified();
+            let kill_wake = job.kill.notified();
+            if gate.try_acquire(token) {
+                drop(gate_wake);
+                drop(kill_wake);
+                return Some(Self { gate });
+            }
+            tokio::select! {
+                _ = gate_wake => {},
+                _ = kill_wake => {},
+            }
+        }
     }
+}
+
+struct ProcessRegistry {
+    shutting_down: bool,
+    ytdlp: HashMap<u32, Arc<Job>>,
 }
 
 pub struct QueueManager {
     jobs: Mutex<HashMap<String, Arc<Job>>>,
     order: Mutex<Vec<String>>,
     gate: Arc<Gate>,
+    processes: Mutex<ProcessRegistry>,
+    process_exit: Notify,
 }
 
 impl Default for QueueManager {
@@ -258,6 +302,84 @@ impl QueueManager {
             jobs: Mutex::new(HashMap::new()),
             order: Mutex::new(Vec::new()),
             gate: Arc::new(Gate::new(3)), // parallel limit; adjustable from Settings
+            processes: Mutex::new(ProcessRegistry {
+                shutting_down: false,
+                ytdlp: HashMap::new(),
+            }),
+            process_exit: Notify::new(),
+        }
+    }
+
+    async fn spawn_ytdlp_child(
+        &self,
+        job: Arc<Job>,
+        mut command: Command,
+    ) -> std::io::Result<Option<tokio::process::Child>> {
+        let mut processes = self.processes.lock().await;
+        if processes.shutting_down {
+            return Ok(None);
+        }
+        let child = command.spawn()?;
+        if let Some(pid) = child.id() {
+            processes.ytdlp.insert(pid, job);
+            Ok(Some(child))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn unregister_ytdlp(&self, pid: u32) {
+        self.processes.lock().await.ytdlp.remove(&pid);
+        self.process_exit.notify_waiters();
+    }
+
+    async fn is_shutting_down(&self) -> bool {
+        self.processes.lock().await.shutting_down
+    }
+
+    /// Waits until currently running yt-dlp children have handled a pause.
+    /// Unlike final shutdown, this keeps the queue usable if an update fails.
+    pub async fn wait_for_video_pause(&self) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            let notified = self.process_exit.notified();
+            if self.processes.lock().await.ytdlp.is_empty() {
+                return;
+            }
+            if tokio::time::timeout_at(deadline, notified).await.is_err() {
+                log::warn!("timed out waiting for yt-dlp pause before update");
+                return;
+            }
+        }
+    }
+
+    /// Pauses and waits for every yt-dlp runner. The runner owns its Child,
+    /// so normal cleanup preserves resumable state and includes descendants.
+    pub async fn shutdown_engine_processes(&self) {
+        let jobs: Vec<Arc<Job>> = {
+            let mut processes = self.processes.lock().await;
+            processes.shutting_down = true;
+            processes.ytdlp.values().cloned().collect()
+        };
+        for job in jobs {
+            job.pause_requested.store(true, Ordering::SeqCst);
+            job.kill.notify_one();
+        }
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            let notified = self.process_exit.notified();
+            if self.processes.lock().await.ytdlp.is_empty() {
+                return;
+            }
+            if tokio::time::timeout_at(deadline, notified).await.is_err() {
+                let pids: Vec<u32> = self.processes.lock().await.ytdlp.keys().copied().collect();
+                log::warn!("timed out waiting for {} yt-dlp process(es)", pids.len());
+                for pid in pids {
+                    terminate_process_tree(pid).await;
+                }
+                return;
+            }
         }
     }
 }
@@ -295,10 +417,17 @@ async fn set_status(app: &AppHandle, job: &Job, status: JobStatus, error: Option
         let state: State<'_, crate::AppState> = app.state();
         let db = state.db.clone();
         let id = job.id.clone();
-        let status_str = serde_json::to_value(status.clone())
-            .ok()
-            .and_then(|v| v.as_str().map(String::from))
-            .unwrap_or_default();
+        let status_str = match status {
+            JobStatus::Queued => "queued",
+            JobStatus::Downloading => "downloading",
+            JobStatus::Merging => "merging",
+            JobStatus::Seeding => "seeding",
+            JobStatus::Paused => "paused",
+            JobStatus::Completed => "completed",
+            JobStatus::Failed => "failed",
+            JobStatus::Canceled => "canceled",
+        }
+        .to_string();
         let started_at = (status == JobStatus::Downloading).then(now_ms);
         let error_str = error.clone();
         let _ = tokio::task::spawn_blocking(move || {
@@ -462,6 +591,7 @@ pub async fn start_video(
         kill: Arc::new(Notify::new()),
         pause_requested: AtomicBool::new(false),
         cancel_requested: AtomicBool::new(false),
+        torrent_selected: AtomicBool::new(false),
         created_at: now_ms(),
     });
 
@@ -540,13 +670,15 @@ pub async fn pause_job(
         .cloned()
         .ok_or("no such job")?;
     if job.engine == "aria2" {
+        job.pause_requested.store(true, Ordering::SeqCst);
         let gid = job.gid.lock().await.clone().ok_or("job has no gid yet")?;
         let daemon = ensure_aria2(&app).await?;
         daemon.pause(&gid).await.map_err(|e| e.to_string())?;
+        set_status(&app, &job, JobStatus::Paused, None).await;
         return Ok(());
     }
     job.pause_requested.store(true, Ordering::SeqCst);
-    job.kill.notify_waiters();
+    job.kill.notify_one();
     Ok(())
 }
 
@@ -594,25 +726,26 @@ pub async fn cancel_job(queue: State<'_, QueueManager>, id: String) -> Result<()
         .cloned()
         .ok_or("no such job")?;
     job.cancel_requested.store(true, Ordering::SeqCst);
-    job.kill.notify_waiters();
+    job.kill.notify_one();
     Ok(())
 }
 
 pub async fn remove_job(queue: State<'_, QueueManager>, id: String) -> Result<(), String> {
-    let mut jobs = queue.jobs.lock().await;
-    let removable = jobs
+    let job = queue
+        .jobs
+        .lock()
+        .await
         .get(&id)
-        .map(|j| {
-            matches!(
-                j.status.try_lock().map(|s| s.0.clone()),
-                Ok(JobStatus::Completed) | Ok(JobStatus::Failed) | Ok(JobStatus::Canceled)
-            )
-        })
-        .unwrap_or(false);
-    if !removable {
+        .cloned()
+        .ok_or("no such job")?;
+    let status = job.status.lock().await.0.clone();
+    if !matches!(
+        status,
+        JobStatus::Completed | JobStatus::Failed | JobStatus::Canceled
+    ) {
         return Err("job is still running".into());
     }
-    jobs.remove(&id);
+    queue.jobs.lock().await.remove(&id);
     queue.order.lock().await.retain(|x| x != &id);
     Ok(())
 }
@@ -639,6 +772,26 @@ async fn requested_kill(job: &Job) -> Option<bool /* pause */> {
     }
 }
 
+/// Stops a tracked engine process and its descendants without invoking a shell.
+async fn terminate_process_tree(pid: u32) {
+    #[cfg(windows)]
+    let mut command = {
+        let mut command = tokio::process::Command::new("taskkill.exe");
+        command.args(["/PID", &pid.to_string(), "/T", "/F"]);
+        command
+    };
+    #[cfg(unix)]
+    let mut command = {
+        let mut command = tokio::process::Command::new("kill");
+        // The runner creates a dedicated process group so ffmpeg children
+        // receive the same signal as their yt-dlp parent.
+        command.args(["-TERM", &format!("-{pid}")]);
+        command
+    };
+
+    let _ = tokio::time::timeout(Duration::from_secs(2), command.status()).await;
+}
+
 async fn run_video_job(
     app: AppHandle,
     queue: &QueueManager,
@@ -647,8 +800,24 @@ async fn run_video_job(
     args: Vec<String>,
     rank: usize,
 ) {
-    let _guard = GateGuard::acquire_rank(queue.gate.clone(), rank).await;
-    if job.status.lock().await.0 == JobStatus::Canceled {
+    let Some(_guard) = GateGuard::acquire_rank(queue.gate.clone(), rank, &job).await else {
+        if job.cancel_requested.swap(false, Ordering::SeqCst) {
+            set_status(&app, &job, JobStatus::Canceled, None).await;
+        } else {
+            set_status(&app, &job, JobStatus::Paused, None).await;
+        }
+        return;
+    };
+    if job.cancel_requested.swap(false, Ordering::SeqCst) {
+        set_status(&app, &job, JobStatus::Canceled, None).await;
+        return;
+    }
+    if job.pause_requested.swap(false, Ordering::SeqCst) {
+        set_status(&app, &job, JobStatus::Paused, None).await;
+        return;
+    }
+    if queue.is_shutting_down().await {
+        set_status(&app, &job, JobStatus::Paused, None).await;
         return;
     }
     set_status(&app, &job, JobStatus::Downloading, None).await;
@@ -656,21 +825,38 @@ async fn run_video_job(
     let mut cmd = Command::new(&binary);
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
-    let mut child = match cmd
-        .args(&args)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
+    #[cfg(unix)]
+    unsafe {
+        cmd.pre_exec(|| {
+            if libc::setpgid(0, 0) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut child = match queue
+        .spawn_ytdlp_child(job.clone(), {
+            cmd.args(&args)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .kill_on_drop(true);
+            cmd
+        })
+        .await
     {
-        Ok(c) => c,
+        Ok(Some(c)) => c,
+        Ok(None) => {
+            set_status(&app, &job, JobStatus::Paused, None).await;
+            return;
+        }
         Err(e) => {
             set_status(&app, &job, JobStatus::Failed, Some(e.to_string())).await;
             return;
         }
     };
 
+    let child_pid = child.id();
     let stdout = child.stdout.take().expect("stdout piped");
     let stderr = child.stderr.take().expect("stderr piped");
 
@@ -682,6 +868,7 @@ async fn run_video_job(
     let stderr_tail_reader = stderr_tail.clone();
     let activity_job = job.id.clone();
     let activity_app = app.clone();
+    let progress_job = job.clone();
     let duration = job
         .spec
         .as_ref()
@@ -695,6 +882,12 @@ async fn run_video_job(
             if let Some(t) = ytdlp::ffmpeg_time_seconds(&line) {
                 if let Some(d) = duration {
                     let t = t.min(d);
+                    {
+                        let mut progress = progress_job.progress.lock().await;
+                        progress.downloaded = t;
+                        progress.total = Some(d);
+                        progress.eta = d - t;
+                    }
                     let _ = activity_app.emit(
                         EVENT_PROGRESS,
                         ProgressEvent {
@@ -813,6 +1006,7 @@ async fn run_video_job(
         }
         (Some(false), _) => {
             set_status(&app, &job, JobStatus::Canceled, None).await;
+            delete_pending(&app, &job.id).await;
         }
         (None, Some(false)) => {
             let tail = stderr_tail.lock().await.clone();
@@ -836,6 +1030,9 @@ async fn run_video_job(
             record_history(&app, &job, JobStatus::Failed, 0).await;
             delete_pending(&app, &job.id).await;
         }
+    }
+    if let Some(pid) = child_pid {
+        queue.unregister_ytdlp(pid).await;
     }
 }
 
@@ -941,9 +1138,10 @@ pub async fn restore_pending_jobs(app: AppHandle) -> usize {
             kill: Arc::new(Notify::new()),
             pause_requested: AtomicBool::new(false),
             cancel_requested: AtomicBool::new(false),
+            torrent_selected: AtomicBool::new(false),
             created_at: row.created_at,
         });
-        register_job(&queue, job.clone());
+        register_job(&queue, job.clone()).await;
         emit_state(
             &app,
             &row.id,
@@ -959,25 +1157,33 @@ pub async fn restore_pending_jobs(app: AppHandle) -> usize {
     restored
 }
 
-/// Updates yt-dlp via its self-updater (`--update`).
+/// Updates yt-dlp via its self-updater (`--update`). Only one updater runs
+/// at a time and a stuck updater is killed after two minutes.
 pub async fn update_ytdlp(app: AppHandle) -> Result<String, String> {
+    let _guard = YTDLP_UPDATE_LOCK.lock().await;
     let binary =
         engines::find_engine(&app, "yt-dlp").ok_or_else(|| "yt-dlp not found".to_string())?;
     let mut updater_cmd = tokio::process::Command::new(binary);
     #[cfg(windows)]
     updater_cmd.creation_flags(CREATE_NO_WINDOW);
-    let out = updater_cmd
-        .arg("--update")
-        .stdin(std::process::Stdio::null())
-        .output()
-        .await
-        .map_err(|e| e.to_string())?;
+    let output = tokio::time::timeout(
+        Duration::from_secs(120),
+        updater_cmd
+            .arg("--ignore-config")
+            .arg("--update")
+            .stdin(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .map_err(|_| "yt-dlp update timed out after 120 seconds".to_string())?
+    .map_err(|e| e.to_string())?;
     let text = format!(
         "{}\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
-    if !out.status.success() {
+    if !output.status.success() {
         return Err(text.lines().last().unwrap_or("update failed").to_string());
     }
     let _ = app.emit("engine://updated", "yt-dlp");
@@ -1044,14 +1250,10 @@ fn default_title_for_url(url: &str) -> String {
         .to_string()
 }
 
-fn register_job(queue: &QueueManager, job: Arc<Job>) {
+async fn register_job(queue: &QueueManager, job: Arc<Job>) {
     let id = job.id.clone();
-    if let Ok(mut jobs) = queue.jobs.try_lock() {
-        jobs.insert(id.clone(), job.clone());
-    }
-    if let Ok(mut order) = queue.order.try_lock() {
-        order.push(id);
-    }
+    queue.jobs.lock().await.insert(id.clone(), job);
+    queue.order.lock().await.push(id);
 }
 
 fn base_job(url: String, title: String, folder: Option<String>) -> Job {
@@ -1070,6 +1272,7 @@ fn base_job(url: String, title: String, folder: Option<String>) -> Job {
         kill: Arc::new(Notify::new()),
         pause_requested: AtomicBool::new(false),
         cancel_requested: AtomicBool::new(false),
+        torrent_selected: AtomicBool::new(false),
         created_at: now_ms(),
     }
 }
@@ -1089,7 +1292,7 @@ pub async fn start_file(
         options["dir"] = json!(dir);
     }
     let gid = daemon
-        .add_uri(std::slice::from_ref(&url), options, false)
+        .add_uri(std::slice::from_ref(&url), options, true)
         .await
         .map_err(|e| e.to_string())?;
     if gid.is_empty() {
@@ -1112,7 +1315,8 @@ pub async fn start_file(
         Some(job.title.lock().await.clone()),
         None,
     );
-    register_job(&queue, job.clone());
+    register_job(&queue, job.clone()).await;
+    record_history_created(&app, &job).await;
 
     let job_task = job.clone();
     let rank = rank_of(&queue, &job.id).await;
@@ -1146,6 +1350,9 @@ pub async fn start_torrent(
             let raw = base64::engine::general_purpose::STANDARD
                 .decode(b64)
                 .map_err(|e| format!("bad torrent payload: {e}"))?;
+            if raw.len() > 10 * 1024 * 1024 {
+                return Err("torrent payload exceeds 10 MiB".into());
+            }
             super::torrent::info_hash(&raw).map(|h| hex_encode(&h[..]))
         }
     };
@@ -1191,7 +1398,7 @@ pub async fn start_torrent(
                                 Some(job.title.lock().await.clone()),
                                 None,
                             );
-                            register_job(&queue, job.clone());
+                            register_job(&queue, job.clone()).await;
                             let job_task = job.clone();
                             let daemon2 = daemon.clone();
                             let existing_gid = st.gid.clone();
@@ -1264,7 +1471,8 @@ pub async fn start_torrent(
         Some(job.title.lock().await.clone()),
         None,
     );
-    register_job(&queue, job.clone());
+    register_job(&queue, job.clone()).await;
+    record_history_created(&app, &job).await;
 
     let job_task = job.clone();
     let rank = rank_of(&queue, &job.id).await;
@@ -1285,10 +1493,41 @@ async fn run_aria2_job(
     rank: usize,
 ) {
     *job.gid.lock().await = Some(gid.clone());
-    let _guard = GateGuard::acquire_rank(queue.gate.clone(), rank).await;
+    let _gate_guard = if job.kind == JobKind::File {
+        let gate_guard = GateGuard::acquire_rank(queue.gate.clone(), rank, &job).await;
+        if gate_guard.is_none() {
+            if job.cancel_requested.swap(false, Ordering::SeqCst) {
+                let _ = daemon.force_remove(&gid).await;
+                set_status(&app, &job, JobStatus::Canceled, None).await;
+            } else {
+                set_status(&app, &job, JobStatus::Paused, None).await;
+            }
+            return;
+        }
+        gate_guard
+    } else {
+        None
+    };
+    if job.cancel_requested.swap(false, Ordering::SeqCst) {
+        let _ = daemon.force_remove(&gid).await;
+        set_status(&app, &job, JobStatus::Canceled, None).await;
+        return;
+    }
+    if queue.is_shutting_down().await {
+        let _ = daemon.pause(&gid).await;
+        set_status(&app, &job, JobStatus::Paused, None).await;
+        return;
+    }
+    if job.kind == JobKind::File {
+        if let Err(error) = daemon.unpause(&gid).await {
+            set_status(&app, &job, JobStatus::Failed, Some(error.to_string())).await;
+            return;
+        }
+    }
     let mut metadata_announced = false;
     let mut last_emit: Option<Instant> = None;
     let mut consecutive_errors = 0u32;
+    let mut gate_guard: Option<GateGuard> = None;
 
     loop {
         tokio::time::sleep(Duration::from_millis(800)).await;
@@ -1314,6 +1553,24 @@ async fn run_aria2_job(
                 continue;
             }
         };
+
+        if job.kind == JobKind::Torrent
+            && job.torrent_selected.load(Ordering::SeqCst)
+            && gate_guard.is_none()
+        {
+            gate_guard = GateGuard::acquire_rank(queue.gate.clone(), rank, &job).await;
+            if gate_guard.is_none() {
+                if job.cancel_requested.swap(false, Ordering::SeqCst) {
+                    let _ = daemon.force_remove(&gid).await;
+                    set_status(&app, &job, JobStatus::Canceled, None).await;
+                }
+                continue;
+            }
+            if let Err(error) = daemon.unpause(&gid).await {
+                set_status(&app, &job, JobStatus::Failed, Some(error.to_string())).await;
+                break;
+            }
+        }
 
         // Torrent metadata resolved → offer the file list to the UI once.
         if job.kind == JobKind::Torrent
@@ -1360,27 +1617,16 @@ async fn run_aria2_job(
                 let seeding = job.kind == JobKind::Torrent
                     && status.total() > 0
                     && status.completed() >= status.total();
-                {
-                    let mut s = job.status.lock().await;
-                    let want = if seeding {
-                        JobStatus::Seeding
-                    } else if s.0 != JobStatus::Downloading && s.0 != JobStatus::Merging {
-                        JobStatus::Downloading
-                    } else {
-                        s.0.clone()
-                    };
-                    if want != s.0 {
-                        s.0 = want.clone();
-                        let _ = app.emit(
-                            EVENT_STATE,
-                            StateEvent {
-                                id: job.id.clone(),
-                                status: want,
-                                title: None,
-                                error: None,
-                            },
-                        );
-                    }
+                let current = job.status.lock().await.0.clone();
+                let want = if seeding {
+                    JobStatus::Seeding
+                } else if current != JobStatus::Downloading && current != JobStatus::Merging {
+                    JobStatus::Downloading
+                } else {
+                    current
+                };
+                if want != job.status.lock().await.0 {
+                    set_status(&app, &job, want, None).await;
                 }
                 {
                     let mut progress = job.progress.lock().await;
@@ -1410,9 +1656,9 @@ async fn run_aria2_job(
                 }
             }
             "paused" | "waiting" => {
-                let mut s = job.status.lock().await;
-                if s.0 != JobStatus::Queued && s.0 != JobStatus::Paused {
-                    s.0 = JobStatus::Paused;
+                let current = job.status.lock().await.0.clone();
+                if current != JobStatus::Queued && current != JobStatus::Paused {
+                    set_status(&app, &job, JobStatus::Paused, None).await;
                 }
             }
             "complete" => {
@@ -1469,6 +1715,35 @@ async fn delete_pending(app: &AppHandle, id: &str) {
     let _ = tokio::task::spawn_blocking(move || db.delete_pending(&id)).await;
 }
 
+async fn record_history_created(app: &AppHandle, job: &Job) {
+    let state: State<'_, crate::AppState> = app.state();
+    let kind = match job.kind {
+        JobKind::Video => "video",
+        JobKind::File => "file",
+        JobKind::Torrent => "torrent",
+    };
+    let rec = HistoryRecord {
+        id: job.id.clone(),
+        kind: kind.into(),
+        engine: job.engine.clone(),
+        url: job.url.clone(),
+        title: job.title.lock().await.clone(),
+        folder: job.folder.clone(),
+        filename: None,
+        status: "queued".into(),
+        total_bytes: None,
+        created_at: job.created_at,
+        finished_at: 0,
+        thumbnail: job.thumbnail.clone(),
+        format: job.spec.as_ref().and_then(|s| s.format_selector.clone()),
+        save_path: job.folder.clone(),
+        started_at: None,
+        error: None,
+    };
+    let db = state.db.clone();
+    let _ = tokio::task::spawn_blocking(move || db.upsert_history(&rec)).await;
+}
+
 /// Persists a finished job to history (non-fatal on error).
 async fn record_history(app: &AppHandle, job: &Job, status: JobStatus, total_bytes: i64) {
     let state: State<'_, crate::AppState> = app.state();
@@ -1511,7 +1786,27 @@ async fn record_history(app: &AppHandle, job: &Job, status: JobStatus, total_byt
         error: view.error,
     };
     let db = state.db.clone();
-    let _ = tokio::task::spawn_blocking(move || db.upsert_history(&rec)).await;
+    let filename = rec.filename.clone();
+    let save_path = rec.save_path.clone();
+    let error = rec.error.clone();
+    let status_name = rec.status.clone();
+    let id = rec.id.clone();
+    let finished = tokio::task::spawn_blocking(move || {
+        db.finish_history(
+            &id,
+            &status_name,
+            total_bytes,
+            filename.as_deref(),
+            save_path.as_deref(),
+            error.as_deref(),
+        )
+    })
+    .await;
+    if matches!(finished, Ok(Err(_)) | Err(_)) {
+        let state: State<'_, crate::AppState> = app.state();
+        let db = state.db.clone();
+        let _ = tokio::task::spawn_blocking(move || db.upsert_history(&rec)).await;
+    }
 }
 
 /// Files of a torrent job (for the selection modal).
@@ -1570,77 +1865,87 @@ pub async fn select_torrent_files(
         .select_files(&gid, &indices)
         .await
         .map_err(|e| e.to_string())?;
+    job.torrent_selected.store(true, Ordering::SeqCst);
     daemon.unpause(&gid).await.map_err(|e| e.to_string())?;
     set_status(&app, &job, JobStatus::Queued, None).await;
     Ok(())
 }
 
-/// Adjusts the parallel-download gate (Settings → Downloads).
-pub async fn set_parallel(queue: State<'_, QueueManager>, n: u32) -> Result<(), String> {
-    queue.gate.set_limit(n.clamp(1, 16)).await;
-    Ok(())
+/// Adjusts the parallel-download gate and aria2's global concurrency.
+pub async fn set_parallel(
+    app: AppHandle,
+    queue: State<'_, QueueManager>,
+    n: u32,
+) -> Result<(), String> {
+    let n = n.clamp(1, 16);
+    queue.gate.set_limit(n);
+    let daemon = ensure_aria2(&app).await?;
+    daemon
+        .set_global_option("max-concurrent-downloads", &n.to_string())
+        .await
+        .map_err(|e| e.to_string())
 }
 
-/// Pauses every running download (video jobs via kill signal, aria2 via RPC).
+/// Pauses every running or queued download without holding queue locks over RPC.
 pub async fn pause_all_jobs(app: AppHandle, queue: State<'_, QueueManager>) -> usize {
-    let jobs = queue.jobs.lock().await;
-    let order = queue.order.lock().await;
+    let jobs: Vec<Arc<Job>> = queue.jobs.lock().await.values().cloned().collect();
     let mut paused = 0;
-    for id in order.iter() {
-        if let Some(job) = jobs.get(id) {
-            let status = job.status.lock().await.0.clone();
-            if status != JobStatus::Downloading && status != JobStatus::Merging {
-                continue;
-            }
-            if job.engine == "aria2" {
-                if let Some(gid) = job.gid.lock().await.clone() {
-                    if let Ok(daemon) = ensure_aria2(&app).await {
-                        let _ = daemon.pause(&gid).await;
-                        paused += 1;
-                    }
-                }
-            } else {
-                job.pause_requested.store(true, Ordering::SeqCst);
-                job.kill.notify_waiters();
-                paused += 1;
-            }
+    for job in jobs {
+        let status = job.status.lock().await.0.clone();
+        if !matches!(
+            status,
+            JobStatus::Queued | JobStatus::Downloading | JobStatus::Merging
+        ) {
+            continue;
         }
+        if job.engine == "aria2" {
+            job.pause_requested.store(true, Ordering::SeqCst);
+            if let Some(gid) = job.gid.lock().await.clone() {
+                if let Ok(daemon) = ensure_aria2(&app).await {
+                    let _ = daemon.pause(&gid).await;
+                }
+            }
+            set_status(&app, &job, JobStatus::Paused, None).await;
+        } else {
+            job.pause_requested.store(true, Ordering::SeqCst);
+            job.kill.notify_one();
+        }
+        paused += 1;
     }
     paused
 }
 
-/// Resumes every paused download.
+/// Resumes every paused download without holding queue locks over awaits.
 pub async fn resume_all_jobs(app: AppHandle, queue: State<'_, QueueManager>) -> usize {
-    let jobs = queue.jobs.lock().await;
-    let order = queue.order.lock().await;
+    let jobs: Vec<Arc<Job>> = queue.jobs.lock().await.values().cloned().collect();
     let mut resumed = 0;
-    for id in order.iter() {
-        if let Some(job) = jobs.get(id) {
-            if job.status.lock().await.0 != JobStatus::Paused {
-                continue;
-            }
-            let app = app.clone();
-            if job.engine == "aria2" {
-                if let Some(gid) = job.gid.lock().await.clone() {
-                    if let Ok(daemon) = ensure_aria2(&app).await {
-                        let _ = daemon.unpause(&gid).await;
-                        resumed += 1;
-                    }
+    for job in jobs {
+        if job.status.lock().await.0 != JobStatus::Paused {
+            continue;
+        }
+        let app = app.clone();
+        if job.engine == "aria2" {
+            job.pause_requested.store(false, Ordering::SeqCst);
+            if let Some(gid) = job.gid.lock().await.clone() {
+                if let Ok(daemon) = ensure_aria2(&app).await {
+                    let _ = daemon.unpause(&gid).await;
+                    set_status(&app, &job, JobStatus::Queued, None).await;
+                    resumed += 1;
                 }
-            } else if job.spec.is_some() {
-                let job = job.clone();
-                let binary = engines::find_engine(&app, "yt-dlp");
-                let ffmpeg = engines::find_engine(&app, "ffmpeg");
-                if let (Some(binary), Some(spec)) = (binary, job.spec.clone()) {
-                    if let Ok(args) = ytdlp::download_args(&spec, ffmpeg.as_ref()) {
-                        set_status(&app, &job, JobStatus::Queued, None).await;
-                        let rank = rank_of(&queue, &job.id).await;
-                        tokio::spawn(async move {
-                            let queue: State<'_, QueueManager> = app.state();
-                            run_video_job(app.clone(), &queue, job, binary, args, rank).await;
-                        });
-                        resumed += 1;
-                    }
+            }
+        } else if let Some(spec) = job.spec.clone() {
+            let binary = engines::find_engine(&app, "yt-dlp");
+            let ffmpeg = engines::find_engine(&app, "ffmpeg");
+            if let Some(binary) = binary {
+                if let Ok(args) = ytdlp::download_args(&spec, ffmpeg.as_ref()) {
+                    job.pause_requested.store(false, Ordering::SeqCst);
+                    set_status(&app, &job, JobStatus::Queued, None).await;
+                    let rank = rank_of(&queue, &job.id).await;
+                    tokio::spawn(async move {
+                        let queue: State<'_, QueueManager> = app.state();
+                        run_video_job(app.clone(), &queue, job, binary, args, rank).await;
+                    });
+                    resumed += 1;
                 }
             }
         }
@@ -1648,11 +1953,89 @@ pub async fn resume_all_jobs(app: AppHandle, queue: State<'_, QueueManager>) -> 
     resumed
 }
 
+fn valid_speed_limit(limit: &str) -> bool {
+    let limit = limit.trim().to_ascii_uppercase();
+    limit.is_empty()
+        || limit.chars().all(|c| c.is_ascii_digit())
+        || (limit.len() > 1
+            && limit.ends_with(['K', 'M'])
+            && limit[..limit.len() - 1].chars().all(|c| c.is_ascii_digit()))
+}
+
+fn valid_seed_ratio(ratio: &str) -> bool {
+    ratio
+        .trim()
+        .parse::<f64>()
+        .map(|value| value.is_finite() && value >= 0.0)
+        .unwrap_or(false)
+}
+
 /// Applies the global aria2 download speed limit live (e.g. "10M", "" = off).
 pub async fn set_speed_limit(app: AppHandle, limit: String) -> Result<(), String> {
+    let limit = limit.trim().to_ascii_uppercase();
+    if !valid_speed_limit(&limit) {
+        return Err("speed limit must match digits with optional K or M suffix".into());
+    }
     let daemon = ensure_aria2(&app).await?;
     daemon
-        .set_global_option("max-overall-download-limit", &limit)
+        .set_global_option(
+            "max-overall-download-limit",
+            if limit.is_empty() { "0" } else { &limit },
+        )
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Applies aria2's seeding ratio. Zero disables the ratio limit.
+pub async fn set_seed_ratio(app: AppHandle, ratio: String) -> Result<(), String> {
+    let ratio = ratio.trim();
+    if !valid_seed_ratio(ratio) {
+        return Err("seed ratio must be a number >= 0".into());
+    }
+    let daemon = ensure_aria2(&app).await?;
+    daemon
+        .set_global_option("seed-ratio", ratio)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Applies aria2's proxy to file and torrent downloads. Empty disables it.
+pub async fn set_proxy(app: AppHandle, proxy: String) -> Result<(), String> {
+    let proxy = proxy.trim();
+    if !proxy.is_empty() {
+        let parsed = url::Url::parse(proxy).map_err(|_| "invalid proxy URL".to_string())?;
+        if !matches!(parsed.scheme(), "http" | "https" | "socks5")
+            || parsed.host_str().is_none()
+            || parsed.username().is_empty() && parsed.password().is_some()
+        {
+            return Err("proxy must be an http or socks5 URL with a host".into());
+        }
+    }
+    let daemon = ensure_aria2(&app).await?;
+    daemon
+        .set_global_option("all-proxy", proxy)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod settings_tests {
+    use super::{valid_seed_ratio, valid_speed_limit};
+
+    #[test]
+    fn validates_speed_limits() {
+        assert!(valid_speed_limit(""));
+        assert!(valid_speed_limit("500K"));
+        assert!(valid_speed_limit("10m"));
+        assert!(!valid_speed_limit("10.5M"));
+        assert!(!valid_speed_limit("M"));
+    }
+
+    #[test]
+    fn validates_seed_ratios() {
+        assert!(valid_seed_ratio("0"));
+        assert!(valid_seed_ratio("1.5"));
+        assert!(!valid_seed_ratio("-1"));
+        assert!(!valid_seed_ratio("NaN"));
+    }
 }

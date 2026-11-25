@@ -6,10 +6,15 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const TARGET = join(ROOT, "src-tauri", "target", "release");
+const TARGET_ROOT = join(ROOT, "src-tauri", "target");
+const TARGET_CANDIDATES = [
+  join(TARGET_ROOT, "x86_64-pc-windows-msvc", "release"),
+  join(TARGET_ROOT, "release"),
+];
+const TARGET = TARGET_CANDIDATES.find((dir) => existsSync(join(dir, "gruzly.exe")));
 const OUT = join(ROOT, "portable", "Gruzly-portable-win64");
 
-if (!existsSync(join(TARGET, "gruzly.exe"))) {
+if (!TARGET) {
   console.error("gruzly.exe not found — run `npx tauri build` first");
   process.exit(1);
 }

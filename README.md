@@ -29,7 +29,7 @@
 - [Quick start](#-quick-start)
 - [Video preview](#-video-preview)
 - [Queue and history](#-queue-and-history)
-- [Settings and updates](#-settings-and-updates)
+- [Settings and updates](#%EF%B8%8F-settings-and-updates)
 - [Architecture](#-architecture)
 - [Keyboard shortcuts](#%EF%B8%8F-keyboard-shortcuts)
 - [Roadmap](#-roadmap)

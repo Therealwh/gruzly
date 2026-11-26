@@ -29,10 +29,23 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          # gh api prints a JSON error body on stdout when it fails, so keep
-          # only a purely numeric id from every lookup.
-          release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" --jq .id 2>/dev/null || true)
+          # Drafts are not returned by the tag endpoint, and a moved tag can
+          # leave one draft plus one published release behind. List first and
+          # prefer the published release. gh api prints a JSON error body on
+          # stdout when it fails, so keep only a purely numeric id.
+          list_id() {
+            gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq "$1" 2>/dev/null | head -n1 || true
+          }
+          release_id=$(list_id '.[] | select(.tag_name=="'"$GITHUB_REF_NAME"'") | select(.draft==false) | .id')
           case "$release_id" in ''|*[!0-9]*) release_id="" ;; esac
+          if [ -z "$release_id" ]; then
+            release_id=$(list_id '.[] | select(.tag_name=="'"$GITHUB_REF_NAME"'") | .id')
+            case "$release_id" in ''|*[!0-9]*) release_id="" ;; esac
+          fi
+          if [ -z "$release_id" ]; then
+            release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" --jq .id 2>/dev/null || true)
+            case "$release_id" in ''|*[!0-9]*) release_id="" ;; esac
+          fi
           if [ -z "$release_id" ]; then
             release_id=$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
               -f tag_name="$GITHUB_REF_NAME" \
@@ -41,12 +54,6 @@ jobs:
               -F draft=true \
               -F prerelease=false \
               --jq .id 2>/dev/null || true)
-            case "$release_id" in ''|*[!0-9]*) release_id="" ;; esac
-          fi
-          if [ -z "$release_id" ]; then
-            # Drafts are not returned by the tag endpoint, only by the list.
-            release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-              --jq '.[] | select(.tag_name=="'"$GITHUB_REF_NAME"'") | .id' | head -n1)
             case "$release_id" in ''|*[!0-9]*) release_id="" ;; esac
           fi
           if [ -z "$release_id" ]; then
@@ -124,7 +131,17 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload $env:GITHUB_REF_NAME portable/Gruzly-portable-win64.zip --clobber
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+        run: |
+          $name = 'Gruzly-portable-win64.zip'
+          $existing = gh api "repos/$env:GITHUB_REPOSITORY/releases/$env:RELEASE_ID/assets" --jq ".[] | select(.name=='$name') | .id"
+          if ($existing) {
+            gh api --method DELETE "repos/$env:GITHUB_REPOSITORY/releases/assets/$existing"
+          }
+          gh api --method POST "https://uploads.github.com/repos/$env:GITHUB_REPOSITORY/releases/$env:RELEASE_ID/assets?name=$name" `
+            -H "Content-Type: application/zip" `
+            --input portable/Gruzly-portable-win64.zip | Out-Null
+          Write-Host "Uploaded $name"
 
   publish:
     name: Publish release
@@ -136,8 +153,20 @@ jobs:
       - name: Publish the prepared draft as latest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
         run: |
-          gh release edit "$GITHUB_REF_NAME" \
-            --repo "$GITHUB_REPOSITORY" \
-            --draft=false \
-            --latest
+          python3 - "$GITHUB_REF_NAME" > release.json <<'PY'
+          import json, re, sys
+
+          tag = sys.argv[1]
+          version = tag[1:] if tag.startswith("v") else tag
+          text = open("CHANGELOG.md", encoding="utf-8").read()
+          match = re.search(
+              rf"^## \[{re.escape(version)}\][^\n]*\n(.*?)(?=^## \[|\Z)",
+              text,
+              re.S | re.M,
+          )
+          body = match.group(1).strip() if match else f"See CHANGELOG.md for {version}."
+          print(json.dumps({"body": body, "draft": False, "make_latest": "true"}))
+          PY
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --input release.json

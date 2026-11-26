@@ -1,6 +1,6 @@
 [package]
 name = "gruzly"
-version = "0.3.4"
+version = "0.3.5"
 description = "Gruzly — download manager: files, torrents and video"
 authors = ["Gruzly contributors"]
 license = "MIT"
@@ -44,6 +44,12 @@ log = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
 libc = "0.2"
 tauri-plugin-deep-link = "2"
+# Archive extraction. Keep the feature sets minimal: ZIP only decodes
+# Deflate/Stored entries, 7z only needs its default LZMA/LZMA2 decoders.
+zip = { version = "4.6.1", default-features = false, features = ["deflate-flate2"] }
+sevenz-rust = { version = "0.6.1", default-features = false }
+tar = { version = "0.4.46", default-features = false }
+flate2 = "1.1.11"
 
 [profile.release]
 panic = "abort"

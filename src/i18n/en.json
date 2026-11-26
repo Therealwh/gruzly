@@ -107,6 +107,7 @@
     "rowActions": "Actions for {{title}}",
     "showInFolder": "Show in folder",
     "playVideo": "Play",
+    "extractArchive": "Extract",
     "title": "Downloads",
     "tabs": {
       "active": "Active",
@@ -375,7 +376,9 @@
       "filenameTemplate": "Filename template",
       "templateHint": "Available variables: %(title)s, %(uploader)s, %(id)s, %(upload_date)s",
       "seedRatio": "Stop seeding at ratio",
-      "seedRatioHint": "0 — seed indefinitely"
+      "seedRatioHint": "0 — seed indefinitely",
+      "autoExtract": "Extract archives automatically",
+      "autoExtractHint": "Unpacks completed .zip, .7z and .tar files next to the download (RAR needs 7-Zip)"
     },
     "engines": {
       "title": "Engines",
@@ -470,6 +473,7 @@
     "downloadStarted": "Download started",
     "downloadCompleted": "Download completed",
     "downloadFailed": "Download failed",
+    "archiveExtracted": "Extracted to {{folder}}",
     "enginesUpdated": "Engines updated",
     "settingsSaved": "Settings saved",
     "historyCleared": "History cleared",
@@ -498,6 +502,8 @@
     "torrentActive": "This torrent is already downloading — find it in the queue",
     "torrentComplete": "This torrent has already been downloaded",
     "ytdlpCookies": "The site asks to sign in. Enable browser cookies in Settings → Integrations and try again.",
+    "extractArchive": "Could not extract the archive.",
+    "archiveRarUnavailable": "RAR archives need 7-Zip installed (7z.exe on PATH or in Program Files).",
     "cookiesChromeBusy": "Chrome keeps its cookie database locked — fully close Chrome, or use a cookies.txt file in Settings → Integrations"
   },
   "format": {

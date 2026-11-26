@@ -36,3 +36,6 @@ AGENTS.md
 .codex/
 .specstory/
 .vetting/
+
+# Built Firefox copy of the extension
+extension/dist-firefox/

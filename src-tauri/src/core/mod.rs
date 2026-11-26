@@ -1,3 +1,4 @@
+pub mod archive;
 pub mod aria2;
 pub mod db;
 pub mod engines;

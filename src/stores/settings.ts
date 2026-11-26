@@ -30,6 +30,8 @@ export type Settings = {
   runAtStartup: boolean;
   closeToTray: boolean;
   notifications: boolean;
+  /** Unpack completed archives automatically next to the download. */
+  autoExtract: boolean;
 };
 
 export type SettingsActions = {
@@ -57,6 +59,7 @@ const DEFAULTS: Settings = {
   runAtStartup: false,
   closeToTray: true,
   notifications: true,
+  autoExtract: false,
 };
 
 function load(): Settings {

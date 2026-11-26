@@ -1,7 +1,10 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { create } from "zustand";
+import { isArchiveName } from "@/lib/archive";
 import { t } from "@/lib/i18n";
 import {
+  CommandError,
+  extractArchive,
   isTauri,
   listJobs,
   queueSlots,
@@ -14,6 +17,12 @@ import {
 } from "@/lib/api";
 
 let orderWrite = Promise.resolve();
+
+/**
+ * Jobs already auto-extracted in this session. Completion can be reported
+ * more than once (state re-emits), so this guards duplicates.
+ */
+const autoExtracted = new Set<string>();
 
 type QueueState = {
   jobs: Map<string, JobView>;
@@ -62,6 +71,37 @@ async function notifyOnTerminal(
     });
   } catch {
     /* notifications unavailable */
+  }
+}
+
+/**
+ * Unpack a freshly completed archive when Settings → Downloads enables it.
+ * Runs at most once per job id; failures surface as a toast, never as state.
+ */
+async function autoExtractCompleted(
+  id: string,
+  filename: string | null | undefined,
+): Promise<void> {
+  if (!isTauri() || !isArchiveName(filename) || autoExtracted.has(id)) return;
+  // Claim the id before the first await so simultaneous completion events
+  // cannot extract the same archive twice.
+  autoExtracted.add(id);
+  const { useSettingsStore } = await import("@/stores/settings");
+  if (!useSettingsStore.getState().autoExtract) {
+    autoExtracted.delete(id);
+    return;
+  }
+  const { toast } = await import("@/components/ui");
+  try {
+    const destination = await extractArchive(id);
+    toast.success(t("toasts.archiveExtracted", { folder: destination }));
+  } catch (error) {
+    const code = error instanceof CommandError ? error.code : null;
+    toast.error(
+      code === "archiveRarUnavailable"
+        ? t("errors.archiveRarUnavailable")
+        : t("errors.extractArchive"),
+    );
   }
 }
 
@@ -160,6 +200,7 @@ export const useQueueStore = create<QueueState>((set, get) => ({
         );
       }
       void notifyOnTerminal(e.status, e.title ?? existing.title);
+      if (e.status === "completed") void autoExtractCompleted(e.id, e.filename);
     } else if (e.title !== null) {
       // New job announced before listJobs saw it.
       const next = new Map(jobs);
@@ -186,6 +227,7 @@ export const useQueueStore = create<QueueState>((set, get) => ({
         createdAt: Date.now(),
       });
       set({ jobs: next, order: [...order, e.id] });
+      if (e.status === "completed") void autoExtractCompleted(e.id, e.filename);
     }
   },
 

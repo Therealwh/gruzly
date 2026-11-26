@@ -107,6 +107,7 @@
     "rowActions": "Действия для «{{title}}»",
     "showInFolder": "Открыть папку с файлом",
     "playVideo": "Воспроизвести",
+    "extractArchive": "Распаковать",
     "title": "Загрузки",
     "tabs": {
       "active": "Активные",
@@ -381,7 +382,9 @@
       "filenameTemplate": "Шаблон имени файла",
       "templateHint": "Доступны переменные: %(title)s, %(uploader)s, %(id)s, %(upload_date)s",
       "seedRatio": "Останавливать раздачу при ратио",
-      "seedRatioHint": "0 — раздавать бесконечно"
+      "seedRatioHint": "0 — раздавать бесконечно",
+      "autoExtract": "Распаковывать архивы автоматически",
+      "autoExtractHint": "Распаковывает завершённые .zip, .7z и .tar рядом с загрузкой (для RAR нужен 7-Zip)"
     },
     "engines": {
       "title": "Движки",
@@ -476,6 +479,7 @@
     "downloadStarted": "Загрузка началась",
     "downloadCompleted": "Загрузка завершена",
     "downloadFailed": "Загрузка не удалась",
+    "archiveExtracted": "Распаковано в {{folder}}",
     "enginesUpdated": "Движки обновлены",
     "settingsSaved": "Настройки сохранены",
     "historyCleared": "История очищена",
@@ -504,6 +508,8 @@
     "torrentActive": "Этот торрент уже скачивается — он в очереди",
     "torrentComplete": "Этот торрент уже скачан",
     "ytdlpCookies": "Сайт требует вход. Включите cookies браузера в Настройки → Интеграции и попробуйте снова.",
+    "extractArchive": "Не удалось распаковать архив.",
+    "archiveRarUnavailable": "Для RAR-архивов нужен установленный 7-Zip (7z.exe в PATH или в Program Files).",
     "cookiesChromeBusy": "Chrome держит базу cookies закрытой — полностью закройте Chrome или выберите файл cookies.txt в Настройках → Интеграции"
   },
   "format": {

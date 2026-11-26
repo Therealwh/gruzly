@@ -1,11 +1,12 @@
 import {
-  Ban, CircleAlert, ClipboardCopy, Download, FileVideo, FolderOpen, Info,
+  Ban, CircleAlert, ClipboardCopy, Download, FileArchive, FileVideo, FolderOpen, Info,
   ListChecks, MoreHorizontal, Pause, Play, RefreshCw, X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { memo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Badge, Menu, MenuContent, MenuItem, MenuTrigger, ProgressBar, Tooltip } from "@/components/ui";
+import { isArchiveName } from "@/lib/archive";
 import type { JobView } from "@/lib/api";
 import { formatBytes, formatEta, formatPercent, formatSpeed } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -87,6 +88,9 @@ export const JobRow = memo(function JobRow({ job, compact, onDetails, selected, 
   const showDetails = () => onDetails?.(detailButton.current);
   if (completed) {
     more.push({ icon: FolderOpen, label: t("downloads.showInFolder"), run: actions.openFolder });
+    if (isArchiveName(job.filename)) {
+      more.push({ icon: FileArchive, label: t("downloads.extractArchive"), run: actions.extract });
+    }
     if (job.kind === "video" && job.filename) {
       more.push({ icon: Play, label: t("downloads.playVideo"), run: actions.play });
     }

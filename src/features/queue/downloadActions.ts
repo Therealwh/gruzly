@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { toast } from "@/components/ui";
-import { cancelJob, CommandError, openCompletedDownload, pauseJob, removeJob, resumeJob, retryJob, torrentFiles, type JobView } from "@/lib/api";
+import { cancelJob, CommandError, extractArchive, openCompletedDownload, pauseJob, removeJob, resumeJob, retryJob, torrentFiles, type JobView } from "@/lib/api";
 import { chooseTorrentFile, torrentFileToBase64 } from "@/lib/torrentFile";
 import { useQueueStore } from "@/stores/queue";
 import { openFolder } from "./JobRowHelpers";
@@ -16,7 +16,11 @@ export function useDownloadActions(job: JobView) {
         await action();
       } catch (error) {
         const code = error instanceof CommandError ? error.code : error instanceof Error ? error.message : null;
-        toast.error(code === "retryNeedsTorrent" ? t("downloads.retryWithTorrent") : message);
+        toast.error(
+          code === "retryNeedsTorrent" ? t("downloads.retryWithTorrent")
+            : code === "archiveRarUnavailable" ? t("errors.archiveRarUnavailable")
+              : message,
+        );
       } finally {
         useQueueStore.getState().setActionPending(job.id, false);
       }
@@ -50,6 +54,10 @@ export function useDownloadActions(job: JobView) {
       else if (job.folder) await openFolder(job.folder, t("errors.openDownloadFolder"));
     }, t("errors.openDownloadFolder")),
     play: () => run(() => openCompletedDownload(job.id, true), t("errors.playDownload")),
+    extract: () => run(async () => {
+      const destination = await extractArchive(job.id);
+      toast.success(t("toasts.archiveExtracted", { folder: destination }));
+    }, t("errors.extractArchive")),
     remove: () => run(async () => {
       await removeJob(job.id);
       useQueueStore.getState().removeJob(job.id);

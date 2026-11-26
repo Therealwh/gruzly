@@ -222,6 +222,11 @@ export async function openCompletedDownload(id: string, play = false): Promise<v
   return call<void>("open_completed_download", { id, play });
 }
 
+/** Unpack a completed archive next to the download; resolves to the folder. */
+export async function extractArchive(id: string): Promise<string> {
+  return call<string>("extract_archive", { id });
+}
+
 export async function listJobs(): Promise<JobView[]> {
   return call<JobView[]>("list_jobs");
 }

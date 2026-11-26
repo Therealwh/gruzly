@@ -365,6 +365,13 @@ function DownloadsSection() {
             aria-label={t("settings.downloads.seedRatio")}
           />
         </Row>
+        <Row label={t("settings.downloads.autoExtract")} hint={t("settings.downloads.autoExtractHint")}>
+          <Switch
+            checked={settings.autoExtract}
+            onCheckedChange={(v) => settings.update({ autoExtract: v })}
+            label={t("settings.downloads.autoExtract")}
+          />
+        </Row>
       </Card>
     </>
   );

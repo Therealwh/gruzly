@@ -153,6 +153,7 @@ pub fn run() {
             commands::queue_slots,
             commands::take_pending_links,
             commands::open_completed_download,
+            commands::extract_archive,
             commands::list_history,
             commands::delete_history_record,
             commands::check_files_exist,

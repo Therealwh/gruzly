@@ -1,8 +1,9 @@
-import { Copy, FolderOpen, ListChecks, Play, RefreshCw } from "lucide-react";
+import { Copy, FileArchive, FolderOpen, ListChecks, Play, RefreshCw } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Button, ProgressBar } from "@/components/ui";
 import { torrentFiles, type JobView, type TorrentFileInfo } from "@/lib/api";
+import { isArchiveName } from "@/lib/archive";
 import { formatBytes, formatEta, formatSpeed } from "@/lib/format";
 import { useUiStore } from "@/stores/ui";
 import { useDownloadActions } from "./downloadActions";
@@ -110,6 +111,9 @@ export function DownloadDetails({ job }: { job: JobView }) {
         )}
         {(job.folder || job.status === "completed") && (
           <Button variant="secondary" size="sm" disabled={actions.pending} onClick={actions.openFolder}><FolderOpen size={14} aria-hidden />{t(job.status === "completed" ? "downloads.showInFolder" : "common.openFolder")}</Button>
+        )}
+        {job.status === "completed" && isArchiveName(job.filename) && (
+          <Button size="sm" disabled={actions.pending} onClick={actions.extract}><FileArchive size={14} aria-hidden />{t("downloads.extractArchive")}</Button>
         )}
         {job.status === "completed" && job.kind === "video" && job.filename && (
           <Button size="sm" disabled={actions.pending} onClick={actions.play}><Play size={14} aria-hidden />{t("downloads.playVideo")}</Button>

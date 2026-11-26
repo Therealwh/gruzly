@@ -23,6 +23,7 @@ use tokio::sync::{Mutex, Notify};
 
 static YTDLP_UPDATE_LOCK: Mutex<()> = Mutex::const_new(());
 
+use super::archive;
 use super::aria2::{Aria2Daemon, Aria2Error, Aria2Status};
 use super::db::HistoryRecord;
 use super::engines;
@@ -1002,6 +1003,86 @@ pub async fn open_completed_download(
     })
     .await
     .map_err(|err| err.to_string())?
+}
+
+/// Unpack a completed archive next to the downloaded file and return the
+/// destination path. Extraction runs on the blocking pool and holds no queue
+/// lock; the archive itself is left untouched.
+pub async fn extract_archive(
+    app: AppHandle,
+    queue: State<'_, QueueManager>,
+    id: String,
+) -> Result<String, String> {
+    let job = queue
+        .jobs
+        .lock()
+        .await
+        .get(&id)
+        .cloned()
+        .ok_or("Download not found")?;
+    if job.status.lock().await.0 != JobStatus::Completed {
+        return Err("Download is not complete".into());
+    }
+    let folder = job.folder.clone().ok_or("Download folder unavailable")?;
+    let filename = job.progress.lock().await.filename.clone();
+    let job_id = id.clone();
+    let destination = tokio::task::spawn_blocking(move || -> Result<String, String> {
+        let folder = Path::new(&folder)
+            .canonicalize()
+            .map_err(|_| "Download folder unavailable")?;
+        if !folder.is_dir() {
+            return Err("Download folder unavailable".into());
+        }
+        // Resolve the file the same way the completed-row actions do, so a
+        // path from the renderer can never be extracted.
+        let file = filename
+            .as_deref()
+            .and_then(|name| completed_file_in(&folder, Path::new(name)))
+            .ok_or("Downloaded file unavailable")?;
+        let name = file
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("Downloaded file unavailable")?;
+        if !archive::is_archive(name) {
+            return Err("Downloaded file is not an archive".into());
+        }
+        let parent = file.parent().ok_or("Download folder unavailable")?;
+        let destination = unique_extract_destination(parent, &file);
+        archive::extract(&file, &destination)?;
+        Ok(destination.to_string_lossy().into_owned())
+    })
+    .await
+    .map_err(|err| err.to_string())??;
+    emit_activity(&app, &job_id, &format!("archive → {destination}"));
+    log::info!("extracted archive: job {job_id} -> {destination}");
+    Ok(destination)
+}
+
+/// `<parent>/<archive stem>`, then ` (2)`, ` (3)`, … when that folder exists.
+fn unique_extract_destination(parent: &Path, file: &Path) -> PathBuf {
+    let stem = extraction_stem(file);
+    let mut candidate = parent.join(&stem);
+    let mut counter = 2u32;
+    while candidate.exists() {
+        candidate = parent.join(format!("{stem} ({counter})"));
+        counter += 1;
+    }
+    candidate
+}
+
+/// Strip the archive suffix so `bundle.tar.gz` unpacks into `bundle`.
+fn extraction_stem(file: &Path) -> String {
+    let name = file
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("archive");
+    let lower = name.to_ascii_lowercase();
+    for suffix in [".tar.gz", ".tgz", ".zip", ".7z", ".tar", ".gz", ".rar"] {
+        if lower.ends_with(suffix) && name.len() > suffix.len() {
+            return name[..name.len() - suffix.len()].to_string();
+        }
+    }
+    name.to_string()
 }
 
 fn completed_file_in(folder: &Path, filename: &Path) -> Option<PathBuf> {
@@ -2953,8 +3034,8 @@ mod queue_tests {
 #[cfg(test)]
 mod settings_tests {
     use super::{
-        completed_file_in, is_playable_media, read_engine_record, valid_seed_ratio,
-        valid_speed_limit, FfmpegProgress, Progress,
+        completed_file_in, extraction_stem, is_playable_media, read_engine_record,
+        unique_extract_destination, valid_seed_ratio, valid_speed_limit, FfmpegProgress, Progress,
     };
     use std::path::Path;
     use std::time::{Duration, Instant};
@@ -2976,6 +3057,31 @@ mod settings_tests {
         assert!(outside.is_none());
         assert!(missing.is_none());
         assert!(!is_playable_media(Path::new("movie.mp4.exe")));
+    }
+
+    #[test]
+    fn extraction_destination_uses_the_archive_stem_and_stays_unique() {
+        let root = std::env::temp_dir().join(format!("gruzly-extract-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let archive = root.join("bundle.tar.gz");
+        std::fs::write(&archive, []).unwrap();
+
+        assert_eq!(extraction_stem(&archive), "bundle");
+        assert_eq!(
+            root.join("bundle"),
+            unique_extract_destination(&root, &archive)
+        );
+        std::fs::create_dir_all(root.join("bundle")).unwrap();
+        assert_eq!(
+            root.join("bundle (2)"),
+            unique_extract_destination(&root, &archive)
+        );
+        std::fs::create_dir_all(root.join("bundle (2)")).unwrap();
+        assert_eq!(
+            root.join("bundle (3)"),
+            unique_extract_destination(&root, &archive)
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
     use tokio::io::{AsyncWriteExt, BufReader};
 

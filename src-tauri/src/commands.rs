@@ -208,6 +208,23 @@ pub async fn open_completed_download(
 }
 
 #[tauri::command]
+pub async fn extract_archive(
+    app: tauri::AppHandle,
+    queue: State<'_, QueueManager>,
+    id: String,
+) -> CmdResult<String> {
+    queue::extract_archive(app, queue, id).await.map_err(|err| {
+        // RAR without a system 7-Zip keeps its stable code so the UI can
+        // show a targeted hint instead of a generic failure.
+        if err == crate::core::archive::RAR_UNAVAILABLE {
+            CommandError::of(&err, &err)
+        } else {
+            CommandError::of("archiveExtract", err)
+        }
+    })
+}
+
+#[tauri::command]
 pub async fn list_history(
     state: State<'_, AppState>,
     query: Option<String>,

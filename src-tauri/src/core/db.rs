@@ -243,6 +243,20 @@ impl Db {
         Ok(())
     }
 
+    /// Replaces the placeholder title once a torrent name is known, keeping
+    /// the search index in sync.
+    pub fn patch_history_title(&self, id: &str, title: &str) -> Result<(), DbError> {
+        let conn = self.conn.lock().expect("db lock");
+        conn.execute(
+            "UPDATE history
+             SET title = ?2,
+                 search_text = lower(?2 || ' ' || url)
+             WHERE id = ?1",
+            rusqlite::params![id, title],
+        )?;
+        Ok(())
+    }
+
     /// Lightweight status patch (no full-row replace): used on every state
     /// transition. Sets started_at the first time a job starts downloading.
     pub fn patch_history_status(
@@ -430,6 +444,25 @@ mod tests {
 
         let matched = db.list_history("beta", "all", "all", None, 100).unwrap();
         assert_eq!(matched.len(), 1);
+    }
+
+    #[test]
+    fn title_patch_replaces_placeholder_and_refreshes_search() {
+        let db = temp_db();
+        let mut record = rec("1", "Torrent", "torrent");
+        record.url = "magnet:?xt=urn:btih:abc".into();
+        db.upsert_history(&record).unwrap();
+
+        db.patch_history_title("1", "Planet.Zoo.2-InsaneRamZes")
+            .unwrap();
+
+        let found = db.list_history("planet", "all", "all", None, 10).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].title, "Planet.Zoo.2-InsaneRamZes");
+        assert!(db
+            .list_history("torrent", "all", "all", None, 10)
+            .unwrap()
+            .is_empty());
     }
 
     fn pending(id: &str) -> PendingJob {

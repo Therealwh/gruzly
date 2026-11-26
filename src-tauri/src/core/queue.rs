@@ -2074,6 +2074,68 @@ async fn clear_transfer_stats(app: &AppHandle, job: &Job) {
     emit_progress(app, job, &mut progress, true);
 }
 
+/// Removes aria2 bookkeeping left behind by a torrent that was cancelled
+/// before any file was selected: the `<info hash>.torrent` metadata file and
+/// the `<name>.aria2` control file. Payload files are never touched, and only
+/// entries inside the job's own destination folder are considered.
+async fn remove_abandoned_torrent_artifacts(job: &Job) {
+    if job.kind != JobKind::Torrent {
+        return;
+    }
+    let Some(folder) = job.folder.clone() else {
+        return;
+    };
+    let name = job.title.lock().await.clone();
+    let hash = job.torrent.lock().await.hash.clone();
+    let _ = tokio::task::spawn_blocking(move || {
+        let Ok(root) = std::fs::canonicalize(&folder) else {
+            return;
+        };
+        let safe_name = || {
+            let candidate = name.trim();
+            (!candidate.is_empty() && candidate != "Torrent" && !candidate.contains(['/', '\\']))
+                .then(|| candidate.to_string())
+        };
+        let mut candidates: Vec<String> = Vec::new();
+        if let Some(name) = safe_name() {
+            candidates.push(format!("{name}.aria2"));
+        }
+        if let Some(hash) =
+            hash.filter(|h| h.len() == 40 && h.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        {
+            let hash = hash.to_ascii_lowercase();
+            // aria2 stores magnet metadata as `<hash>.torrent`, with its own
+            // control file while that small download is still in flight.
+            candidates.push(format!("{hash}.torrent.aria2"));
+            candidates.push(format!("{hash}.torrent"));
+        }
+        for candidate in candidates {
+            let Ok(path) = std::fs::canonicalize(root.join(candidate)) else {
+                continue;
+            };
+            if path.parent() != Some(root.as_path()) || !path.is_file() {
+                continue;
+            }
+            if let Err(error) = std::fs::remove_file(&path) {
+                log::warn!("could not remove {}: {error}", path.display());
+            }
+        }
+        // A multi-file torrent may have created its target folder already.
+        if let Some(name) = safe_name() {
+            if let Ok(folder) = std::fs::canonicalize(root.join(name)) {
+                let empty = folder.is_dir()
+                    && std::fs::read_dir(&folder)
+                        .map(|mut entries| entries.next().is_none())
+                        .unwrap_or(false);
+                if empty && folder.parent() == Some(root.as_path()) {
+                    let _ = std::fs::remove_dir(&folder);
+                }
+            }
+        }
+    })
+    .await;
+}
+
 /// The poller owns the slot and only unpauses data transfers after acquiring one.
 async fn run_aria2_job(app: AppHandle, job: Arc<Job>, daemon: Arc<Aria2Daemon>, mut gid: String) {
     let _runner = RunnerGuard(&job.runner_active);
@@ -2102,10 +2164,16 @@ async fn run_aria2_job(app: AppHandle, job: Arc<Job>, daemon: Arc<Aria2Daemon>, 
                 .ok()
                 .and_then(|status| status.followed_by.into_iter().next())
                 .unwrap_or_else(|| gid.clone());
+            let unselected_torrent =
+                job.kind == JobKind::Torrent && !job.torrent_selected.load(Ordering::SeqCst);
             let _ = daemon.force_remove(&target).await;
             drop(gate_guard.take());
+            if unselected_torrent {
+                remove_abandoned_torrent_artifacts(&job).await;
+            }
             clear_transfer_stats(&app, &job).await;
             set_status(&app, &job, JobStatus::Canceled, None).await;
+            record_history(&app, &job, JobStatus::Canceled, 0).await;
             break;
         }
         if job.pause_requested.load(Ordering::SeqCst) {
@@ -2344,6 +2412,14 @@ async fn cache_torrent_files(
         .collect();
     let name = status.torrent_name().unwrap_or_else(|| "Torrent".into());
     *job.title.lock().await = name.clone();
+    if name != "Torrent" {
+        // The record was created at add time with a placeholder title.
+        let state: State<'_, crate::AppState> = app.state();
+        let db = state.db.clone();
+        let id = job.id.clone();
+        let title = name.clone();
+        let _ = tokio::task::spawn_blocking(move || db.patch_history_title(&id, &title)).await;
+    }
     if matches!(status.status.as_str(), "error" | "complete" | "removed") {
         return;
     }
@@ -2741,6 +2817,33 @@ mod queue_tests {
             "retryTorrentMismatch"
         );
         assert!(validate_retry_torrent(Some(&payload), Some(&hash)).is_ok());
+    }
+
+    #[tokio::test]
+    async fn canceled_torrent_cleanup_keeps_payload_files() {
+        let root = std::env::temp_dir().join(format!("gruzly-cancel-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let hash = "7a42d4aa43a6a309fe5979e0a29320cf08bb1234";
+        std::fs::write(root.join(format!("{hash}.torrent")), b"metadata").unwrap();
+        std::fs::write(root.join("Sample Pack.aria2"), b"control").unwrap();
+        std::fs::write(root.join("keep.bin"), b"payload").unwrap();
+        std::fs::create_dir(root.join("Sample Pack")).unwrap();
+
+        let mut job = base_job(
+            "magnet:?xt=urn:btih:placeholder".into(),
+            "Sample Pack".into(),
+            Some(root.to_string_lossy().to_string()),
+        );
+        job.kind = JobKind::Torrent;
+        job.torrent.lock().await.hash = Some(hash.to_string());
+
+        remove_abandoned_torrent_artifacts(&job).await;
+
+        assert!(!root.join(format!("{hash}.torrent")).exists());
+        assert!(!root.join("Sample Pack.aria2").exists());
+        assert!(!root.join("Sample Pack").exists());
+        assert!(root.join("keep.bin").exists());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -4,7 +4,7 @@
     <img alt="Gruzly" src=".github/assets/banner-light.svg" width="100%">
   </picture>
 
-  <p><strong>Files, torrents &amp; video from 1000+ sites.<br>Preview before you download.</strong></p>
+  <p><strong>Download files, torrents &amp; videos.<br>Preview before you download.</strong></p>
 
   [🇬🇧 English](README.md) • [🇷🇺 Русский](README.ru.md)
 </div>
@@ -18,17 +18,18 @@
 
 [![CI](https://img.shields.io/github/actions/workflow/status/Therealwh/gruzly/ci.yml?style=for-the-badge&logo=githubactions&logoColor=white&label=CI&color=0ea5e9)](https://github.com/Therealwh/gruzly/actions)
 ![Windows](https://img.shields.io/badge/Windows-10%2B-0ea5e9?style=for-the-badge&logo=windows&logoColor=white)
-![macOS](https://img.shields.io/badge/macOS-12%2B-8b5cf6?style=for-the-badge&logo=apple&logoColor=white)
-![Linux](https://img.shields.io/badge/Linux-x64%20%7C%20arm64-10b981?style=for-the-badge&logo=linux&logoColor=white)
+![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon-8b5cf6?style=for-the-badge&logo=apple&logoColor=white)
+![Linux](https://img.shields.io/badge/Linux-x86__64-10b981?style=for-the-badge&logo=linux&logoColor=white)
 
 ## Contents
 
-- [What makes it different](#-what-makes-it-different)
+- [Why Gruzly](#-why-gruzly)
 - [Screenshots](#-screenshots)
 - [Installation](#-installation)
 - [Quick start](#-quick-start)
 - [Video preview](#-video-preview)
-- [How it compares](#-how-it-compares)
+- [Queue and history](#-queue-and-history)
+- [Settings and updates](#-settings-and-updates)
 - [Architecture](#-architecture)
 - [Keyboard shortcuts](#%EF%B8%8F-keyboard-shortcuts)
 - [Roadmap](#-roadmap)
@@ -37,19 +38,23 @@
 - [Acknowledgements](#-acknowledgements)
 - [License](#-license)
 
-## ✨ What makes it different
+## ✨ Why Gruzly
 
-- **See it before you spend the bandwidth.** Paste a link → an in-app player
-  and a format table (quality, fps, codec, size, HDR) appear. Pick «Best»,
-  «1080p», «720p» or «Audio only» — then commit.
-- **One queue for everything.** Video, direct files, magnets and `.torrent`
-  files live in the same list with live progress, pause/resume and retry.
-- **Real engines, small shell.** yt-dlp, aria2 (16 connections per file) and
-  FFmpeg do the heavy lifting; the Rust/Tauri shell stays out of the way.
-- **Self-healing.** yt-dlp updates itself at launch — site extractors break
-  regularly, the app keeps up.
-- **Both themes, both languages.** Dark and light are designed, not inverted;
-  English and Russian are complete, with pluralization handled by `Intl`.
+- **Video preview first.** Gruzly analyzes a link and shows the title, metadata
+  and a format summary — quality, codec, container, estimated size, HDR — before
+  you commit bandwidth.
+- **Files and torrents in one place.** HTTP, HTTPS, FTP, magnet links and local
+  `.torrent` files land in the same queue. aria2 can use up to 16 connections
+  per file when the server supports ranges, and torrents ask you which files to
+  download.
+- **A queue that explains itself.** Every row shows the bytes moved, rate and
+  time remaining when the engine can report them. Torrent rows distinguish
+  metadata, file selection, waiting for a slot, waiting for peers and seeding.
+- **Real engines, small shell.** yt-dlp, aria2 and FFmpeg do the work; the
+  Rust/Tauri shell validates arguments and stays out of the way.
+- **Both themes, both languages.** Dark, light and system themes with accent and
+  density settings; English and Russian are complete, with plural forms handled
+  by `Intl`.
 
 ## 📸 Screenshots
 
@@ -60,92 +65,139 @@
 
 ## 🚀 Installation
 
-Grab the latest build from
-[Releases](https://github.com/Therealwh/gruzly/releases) — yt-dlp, aria2 and
-FFmpeg are bundled, nothing else to install:
+Choose the package for your system on the
+[latest release page](https://github.com/Therealwh/gruzly/releases/latest).
+The Windows installers and portable archive include yt-dlp, aria2 and FFmpeg.
 
-| File | What it is |
+| Package | System |
 |---|---|
-| `Gruzly_<ver>_x64-setup.exe` | Windows installer (NSIS) |
-| `Gruzly_<ver>_x64_en-US.msi` | Windows MSI for silent deployment |
-| `Gruzly-portable-win64.zip` | Portable — unzip anywhere, run `Gruzly.exe` |
-| `Gruzly_<ver>_amd64.deb` / `.AppImage` | Linux (deb pulls `aria2` from repos) |
-| `Gruzly_aarch64.app.tar.gz` | macOS (Apple Silicon) |
+| `Gruzly_<ver>_x64-setup.exe` | Windows 10/11 x64, NSIS installer |
+| `Gruzly_<ver>_x64_en-US.msi` | Windows 10/11 x64, MSI installer |
+| `Gruzly-portable-win64.zip` | Windows x64 — extract and run `Gruzly.exe` |
+| `Gruzly_<ver>_amd64.deb` | Linux x86-64 — `sudo apt install ./Gruzly_<ver>_amd64.deb` |
+| `Gruzly_<ver>_amd64.AppImage` | Linux x86-64 — make the file executable, then run it |
+| `Gruzly_aarch64.app.tar.gz` | Apple Silicon macOS — extract the `.app` |
 
-Windows 10+ includes WebView2 automatically. The current macOS artifact targets Apple Silicon; Linux artifacts target x86_64 and require the documented system packages for the deb build. Sidecar versions are pinned in `engines.lock.json`; update them only with a reviewed hash/source change.
+- **Windows.** The NSIS and MSI installers can download WebView2 during setup.
+  The portable ZIP expects WebView2 to be installed already. History, settings
+  and engine data live in your user profile, outside the extracted folder.
+- **Linux.** The `.deb` declares dependencies on `aria2` and
+  `libwebkit2gtk-4.1-0`. For the AppImage, install `aria2` from your
+  distribution; some systems also need FUSE.
+- **macOS.** The build uses Homebrew's `aria2` and FFmpeg and may need their
+  libraries at runtime. Tauri update signatures and Apple notarization are
+  separate concerns.
+
+Sidecar versions and hashes are pinned in `engines.lock.json`; update them only
+with a reviewed source change.
 
 ## ⚡ Quick start
 
-1. **Install and launch** — the app starts on the Dashboard.
-2. **Paste any link** into Quick add — video links open the preview modal,
-   files and magnets go straight to the queue.
-3. **Pick quality, press Download** — progress, speed and ETA appear in the
-   unified queue; right-click for open-folder / retry.
+1. **Video.** Open **Video**, paste a supported link and choose **Analyze**.
+   Pick a preset in the preview and confirm the download.
+2. **Direct files.** Open **Files & Torrents**, paste a link and choose **Add**.
+   You can also submit several links at once. Quick add on the Dashboard fills
+   the link into the matching section for you.
+3. **Torrents.** Paste a magnet link, or choose or drop a local `.torrent` file.
+   Wait for metadata, tick the files you want and confirm. If you dismiss the
+   picker, reopen it from the queue. A remote `.torrent` URL goes through the
+   direct-link flow instead.
+4. **Downloads.** Follow live progress in the queue and use `⋯` for actions on
+   any row. On completed rows, a double-click or double-tap opens the same menu.
 
 ## 🎬 Video preview
 
-The killer feature: analysis happens first, download happens after you
-decide. The modal shows an embedded player (YouTube, Rutube, VK, OK,
-Bilibili), the full format table with estimated sizes and HDR badges, one
-click presets, subtitle selection, and playlist handling with per-video
-checkboxes.
+The preview modal shows the video's metadata and a format summary with
+estimated sizes and HDR badges where available. An embedded player appears for
+sites Gruzly can embed (YouTube, Rutube, OK, VK, Bilibili); for other links it
+falls back to the thumbnail and metadata.
+
+Choose **Best**, up to 1080p, up to 720p or **Audio only**, select available
+subtitles, and pick individual videos in supported playlists. Extraction is
+done by yt-dlp, so which links work also depends on the site and on yt-dlp's
+current extractors.
 
 ![Video preview, dark theme](.github/assets/screenshot-dark-ru.png)
 
-## 🆚 How it compares
+## 📋 Queue and history
 
-| | Gruzly | IDM | JDownloader 2 | yt-dlp (CLI) | Browser |
-|---|---|---|---|---|---|
-| Price | Free, MIT | $25 lifetime | Free | Free | Free |
-| Footprint | ~80 MB installed | ~15 MB | Java, heavy | CLI only | — |
-| Torrents | ✓ | ✗ | ✓ | ✗ | ✗ |
-| Video, 1000+ sites | ✓ | partial | ✓ | ✓ | ✗ |
-| Preview before download | ✓ | ✗ | ✗ | ✗ | — |
-| Multi-connection downloads | ✓ (16) | ✓ | ✓ | limited | ✗ |
-| Dark & light themes | ✓ | ✗ | ✗ | — | — |
-| RU & EN UI | ✓ | partial | ✓ | — | ✓ |
+- **Downloads.** Counted **Active**, **Queued**, **Completed** and **Errors**
+  tabs, plus search and a type filter. Active and queued jobs can be reordered
+  with the drag handle or from the keyboard. The footer shows total download
+  and upload rates and how many parallel slots are in use.
+- **Torrent details.** Select a row to see its phase (metadata, file selection,
+  waiting for a slot or peers, seeding), selected files and total size,
+  destination, and connections with connected seeders when aria2 reports them.
+  Details open in a side panel on wide windows and in a dialog on narrow ones.
+- **Actions.** Pause, resume, cancel and retry appear in the states where they
+  apply. Retrying a local torrent asks for the original `.torrent` and accepts
+  only a matching info hash; a previously confirmed selection is reused when
+  the file indices still match. **Copy details** shares a summary that omits
+  links, local paths and secrets.
+- **Completed downloads.** Grouped into Video, Files and Torrents. Each row can
+  reveal its output in the folder or play a finished video in the system player.
+- **History.** A local SQLite database records every download from the moment
+  it is added. Search, filter by status and type, sort, re-check files and
+  export to CSV. Unfinished video jobs come back paused after a restart; direct
+  file and torrent jobs have to be added again.
 
-Where the others still win: IDM has two decades of browser-extension polish;
-JDownloader's crawler covers more edge cases. Gruzly is young and moving fast.
+## ⚙️ Settings and updates
+
+- Download folder, parallel jobs, speed limit and seeding ratio, plus proxy
+  (HTTP or SOCKS5), notifications, tray behaviour, autostart, cookies and
+  yt-dlp auto-update. What each engine honours depends on the engine.
+- For video downloads that need a sign-in, enable cookies in
+  **Settings → Integrations**. A `cookies.txt` file takes priority over browser
+  extraction and is the more reliable option on Windows, where Chrome locks its
+  cookie database. Treat that file as a login credential. Video analysis
+  itself does not send cookies.
+- **Presets** stores custom profiles. Applying them automatically by domain is
+  not wired yet; the preview uses its built-in quality presets.
+- **About** checks for signed app updates and verifies the update package
+  signature. Portable builds update by extracting a newer ZIP.
 
 ## 🏗 Architecture
 
 ```mermaid
 flowchart LR
     UI["React + TS frontend"] -->|invoke| CORE["Rust orchestrator<br/>(Tauri 2)"]
-    CORE -->|events ≤4/s| UI
+    CORE -->|events, throttled| UI
     CORE --> YT["yt-dlp sidecar"]
     CORE --> AR["aria2c sidecar"]
     CORE --> FF["FFmpeg sidecar"]
     YT -->|"JSON analysis<br/>%(progress)j"| CORE
-    AR -->|"JSON-RPC<br/>127.0.0.1"| CORE
+    AR -->|"JSON-RPC on loopback<br/>per-launch secret"| CORE
     FF -->|"mux video+audio<br/>mp3 / m4a"| CORE
     DB[(SQLite history)] --- CORE
 ```
 
-Engine arguments are validated in Rust and always passed as argv arrays —
-see [SECURITY_REVIEW.md](SECURITY_REVIEW.md) for the full review.
+Engine arguments are validated in Rust and always passed as argv arrays — see
+[SECURITY_REVIEW.md](SECURITY_REVIEW.md) for the full review.
 
 ## ⌨️ Keyboard shortcuts
 
 | Shortcut | Action |
 |---|---|
 | `Ctrl+K` | Command palette |
-| `Ctrl+V` | Paste & analyze link |
-| `Ctrl+1…8` | Jump to section |
-| `Ctrl+Shift+L` | Toggle theme |
+| `Ctrl+V` | Open the Dashboard (only when focus is outside a text field) |
+| `Ctrl+2` | Open Downloads |
+| `Ctrl+3` | Open Video |
+| `Ctrl+Shift+L` | Toggle light/dark theme |
 
-All shortcuts are remappable in Settings → Hotkeys.
+These default bindings are remappable in **Settings → Hotkeys**. Shortcuts use
+the Control key on every platform.
 
 ## 🗺 Roadmap
 
-- [x] Video analysis → preview → download (v0.1.0)
-- [x] Files & torrents via aria2 with per-file selection (v0.1.0)
-- [x] Signed self-updates (v0.1.1)
-- [x] Aria2 reliability fixes from field testing (v0.1.2)
-- [x] Tray menu & close-to-tray wiring
-- [x] Drag-and-drop queue priorities
-- [ ] Per-domain preset auto-apply
+- [x] Video analysis → preview → download
+- [x] Files and torrents via aria2 with per-file selection
+- [x] Signed app updates
+- [x] Tray menu, close-to-tray and autostart
+- [x] Queue priorities (drag and keyboard)
+- [x] Persistent history with search, filters and CSV export
+- [x] Torrent phase tracking, details panel and retry
+- [ ] Apply presets automatically by domain
+- [ ] Restore file and torrent jobs after a restart
 - [ ] Browser extension: catch video URLs mid-browse
 - [ ] `gruzly <url>` CLI
 - [ ] Phone remote: send a link from mobile
@@ -177,8 +229,9 @@ Gruzly is a thin shell around workhorse projects:
 
 ## 📄 License
 
-[MIT](LICENSE). The bundled engines keep their own licenses (yt-dlp:
-Unlicense, aria2: GPL-2.0, FFmpeg: LGPL-2.1+) and are distributed unmodified.
+Gruzly's own code is [MIT](LICENSE). The bundled engines keep their own
+licenses; versions, license terms and source links are listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## ⭐ Star History
 

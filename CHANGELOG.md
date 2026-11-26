@@ -3,6 +3,27 @@
 All notable changes to Gruzly are documented here. Format: Keep a Changelog,
 versioning: SemVer.
 
+## [0.3.3] — 2026-11-26
+
+### Added
+- Compact download queue with counted Active, Queued, Completed and Errors tabs, search, type filter, aligned metrics, and a footer with total transfer rates and occupied slots.
+- Details panel for the selected job: in a side panel on wide windows and a dialog on narrow ones. Torrents show their phase, selected files and size, destination, connections, connected seeders and upload speed.
+- Retry for failed jobs, including local torrents after reselecting the original `.torrent`. A matching info hash is required, and a confirmed file selection is reused when the file indices still match.
+- Copy diagnostic summary from the Errors tab, limited to engine, status and numeric error code — no links, paths or secrets.
+- Keyboard reordering for active and queued jobs next to the drag handles.
+
+### Changed
+- Completed downloads are grouped by type; the action menu opens from `⋯`, double-click or double-tap, and offers folder reveal plus playback for finished video.
+- Torrent file selection can be reopened from the queue; dismissing the picker no longer cancels the job.
+- aria2 transfers release their queue slot while paused and rejoin the queue on resume.
+- Release builds upload into the draft created for the tag, run sequentially so the updater manifest merges cleanly, and publish once all platforms finish.
+
+### Fixed
+- A lost aria2 `unpause` reply no longer restarts an active task: the same GID is inspected before a single retry, and an unreachable engine still reports an error.
+- Video progress for HLS and web streams now reports rate, bytes and completion from FFmpeg output and marked yt-dlp progress.
+- Completed rows resolve the actual output file for folder reveal and playback.
+- OS notifications no longer carry raw engine error text.
+
 ## [0.3.2] — 2026-11-26
 
 ### Fixed

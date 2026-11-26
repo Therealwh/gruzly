@@ -183,6 +183,8 @@ pub fn find_engine(app: &tauri::AppHandle, id: &str) -> Option<PathBuf> {
 /// Runs `binary version_args` and returns trimmed combined output.
 fn probe_version(binary: &PathBuf, args: &[&str]) -> Result<String, EngineError> {
     use std::io::Read;
+    use std::sync::mpsc;
+    use std::thread;
 
     #[cfg(windows)]
     use std::os::windows::process::CommandExt as _;
@@ -197,35 +199,72 @@ fn probe_version(binary: &PathBuf, args: &[&str]) -> Result<String, EngineError>
         .stderr(std::process::Stdio::piped())
         .spawn()?;
 
-    let deadline = std::time::Instant::now() + PROBE_TIMEOUT;
-    let mut stdout = child.stdout.take().expect("stdout piped");
-    let mut buf = Vec::new();
-
-    // Simple bounded read: engines print version info immediately.
-    loop {
-        if std::time::Instant::now() >= deadline {
-            let _ = child.kill();
-            return Err(EngineError::Io(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "version probe timed out",
-            )));
-        }
+    let stdout = child.stdout.take().expect("stdout piped");
+    let stderr = child.stderr.take().expect("stderr piped");
+    let (tx, rx) = mpsc::channel::<Vec<u8>>();
+    let tx_stdout = tx.clone();
+    thread::spawn(move || {
+        let mut stream = stdout;
+        let mut data = Vec::new();
         let mut chunk = [0u8; 4096];
-        match stdout.read(&mut chunk) {
-            Ok(0) => break,
-            Ok(n) => buf.extend_from_slice(&chunk[..n]),
-            Err(_) => break,
+        loop {
+            match stream.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => {
+                    data.extend_from_slice(&chunk[..n]);
+                    if data.len() >= 16 * 1024 {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
         }
-        if buf.len() > 16 * 1024 {
-            break; // enough for a version string
+        let _ = tx_stdout.send(data);
+    });
+    let tx_stderr = tx.clone();
+    thread::spawn(move || {
+        let mut stream = stderr;
+        let mut data = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            match stream.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => {
+                    data.extend_from_slice(&chunk[..n]);
+                    if data.len() >= 16 * 1024 {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
         }
-        if std::time::Instant::now() >= deadline {
-            break;
+        let _ = tx_stderr.send(data);
+    });
+    drop(tx);
+
+    let deadline = std::time::Instant::now() + PROBE_TIMEOUT;
+    let mut output = Vec::new();
+    while std::time::Instant::now() < deadline {
+        match rx.recv_timeout(Duration::from_millis(50)) {
+            Ok(data) => output.extend(data),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if child.try_wait()?.is_some() {
+                    break;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
+    if std::time::Instant::now() >= deadline && child.try_wait()?.is_none() {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(EngineError::Io(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "version probe timed out",
+        )));
+    }
     let _ = child.wait();
-
-    Ok(String::from_utf8_lossy(&buf).trim().to_string())
+    Ok(String::from_utf8_lossy(&output).trim().to_string())
 }
 
 /// Probes all engines. Runs on a blocking thread (spawned by the caller).

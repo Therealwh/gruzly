@@ -157,7 +157,11 @@ impl Aria2Daemon {
 
     pub async fn version(&self) -> Result<String, Aria2Error> {
         let r = self.rpc("getVersion", self.authed(json!([]))).await?;
-        Ok(r["version"].as_str().unwrap_or("?").to_string())
+        let version = r["version"]
+            .as_str()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| Aria2Error::Rpc("invalid getVersion response".into()))?;
+        Ok(version.to_string())
     }
 
     /// Adds URIs (http/ftp/magnet). Returns the gid.

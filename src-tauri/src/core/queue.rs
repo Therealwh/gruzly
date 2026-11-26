@@ -131,6 +131,7 @@ struct Job {
     cancel_requested: AtomicBool,
     /// Torrent metadata is held paused until the file-selection modal confirms.
     torrent_selected: AtomicBool,
+    runner_active: AtomicBool,
     created_at: i64,
 }
 
@@ -597,6 +598,7 @@ pub async fn start_video(
         pause_requested: AtomicBool::new(false),
         cancel_requested: AtomicBool::new(false),
         torrent_selected: AtomicBool::new(false),
+        runner_active: AtomicBool::new(false),
         created_at: now_ms(),
     });
 
@@ -648,6 +650,9 @@ pub async fn start_video(
     }
 
     emit_state(&app, &job, JobStatus::Queued, Some(title.clone()), None);
+    let _ = job
+        .runner_active
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst);
 
     let rank = rank_of(&queue, &job.id).await;
 
@@ -712,6 +717,9 @@ pub async fn resume_job(
         engines::find_engine(&app, "yt-dlp").ok_or_else(|| "yt-dlp not found".to_string())?;
     let ffmpeg = engines::find_engine(&app, "ffmpeg");
     let args = ytdlp::download_args(&spec, ffmpeg.as_ref()).map_err(|e| e.to_string())?;
+    if !claim_runner(&job) {
+        return Err("job is already running".into());
+    }
 
     set_status(&app, &job, JobStatus::Queued, None).await;
     let rank = rank_of(&queue, &job.id).await;
@@ -797,6 +805,20 @@ async fn terminate_process_tree(pid: u32) {
     let _ = tokio::time::timeout(Duration::from_secs(2), command.status()).await;
 }
 
+fn claim_runner(job: &Job) -> bool {
+    job.runner_active
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_ok()
+}
+
+struct RunnerGuard<'a>(&'a AtomicBool);
+
+impl Drop for RunnerGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
 async fn run_video_job(
     app: AppHandle,
     queue: &QueueManager,
@@ -805,6 +827,7 @@ async fn run_video_job(
     args: Vec<String>,
     rank: usize,
 ) {
+    let _runner_guard = RunnerGuard(&job.runner_active);
     let Some(_guard) = GateGuard::acquire_rank(queue.gate.clone(), rank, &job).await else {
         if job.cancel_requested.swap(false, Ordering::SeqCst) {
             set_status(&app, &job, JobStatus::Canceled, None).await;
@@ -1144,6 +1167,7 @@ pub async fn restore_pending_jobs(app: AppHandle) -> usize {
             pause_requested: AtomicBool::new(false),
             cancel_requested: AtomicBool::new(false),
             torrent_selected: AtomicBool::new(false),
+            runner_active: AtomicBool::new(false),
             created_at: row.created_at,
         });
         register_job(&queue, job.clone()).await;
@@ -1272,6 +1296,7 @@ fn base_job(url: String, title: String, folder: Option<String>) -> Job {
         pause_requested: AtomicBool::new(false),
         cancel_requested: AtomicBool::new(false),
         torrent_selected: AtomicBool::new(false),
+        runner_active: AtomicBool::new(false),
         created_at: now_ms(),
     }
 }
@@ -1939,6 +1964,9 @@ pub async fn resume_all_jobs(app: AppHandle, queue: State<'_, QueueManager>) -> 
             let ffmpeg = engines::find_engine(&app, "ffmpeg");
             if let Some(binary) = binary {
                 if let Ok(args) = ytdlp::download_args(&spec, ffmpeg.as_ref()) {
+                    if !claim_runner(&job) {
+                        continue;
+                    }
                     job.pause_requested.store(false, Ordering::SeqCst);
                     set_status(&app, &job, JobStatus::Queued, None).await;
                     let rank = rank_of(&queue, &job.id).await;

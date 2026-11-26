@@ -3,6 +3,13 @@
 All notable changes to Gruzly are documented here. Format: Keep a Changelog,
 versioning: SemVer.
 
+## [0.3.4] — 2026-11-26
+
+### Fixed
+- Cancelling a torrent or a direct download now removes aria2's bookkeeping from the destination folder — the `<name>.aria2` control file, the `<hash>.torrent` metadata file and an empty torrent folder — instead of leaving them behind.
+- Downloaded payload stays on disk after a cancel: partial data is never deleted implicitly.
+- A torrent's history row shows the real name as soon as aria2 reports its metadata, including cancelled tasks, and the search index follows the new title.
+
 ## [0.3.3] — 2026-11-26
 
 ### Added

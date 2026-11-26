@@ -2074,32 +2074,43 @@ async fn clear_transfer_stats(app: &AppHandle, job: &Job) {
     emit_progress(app, job, &mut progress, true);
 }
 
-/// Removes aria2 bookkeeping left behind by a torrent that was cancelled
-/// before any payload byte arrived: the `<info hash>.torrent` metadata file
-/// and the `<name>.aria2` control file. Payload files are never touched, and
-/// only entries inside the job's own destination folder are considered.
-async fn remove_abandoned_torrent_artifacts(job: &Job) {
-    if job.kind != JobKind::Torrent {
+/// Removes the aria2 bookkeeping left in the destination folder when a job is
+/// cancelled: the `<info hash>.torrent` metadata file and the `<name>.aria2`
+/// control file for torrents, and the `<file>.aria2` control file for direct
+/// downloads. Payload files are never touched, and only entries inside the
+/// job's own destination folder are considered.
+async fn remove_aria2_bookkeeping(job: &Job) {
+    if !matches!(job.kind, JobKind::Torrent | JobKind::File) {
         return;
     }
     let Some(folder) = job.folder.clone() else {
         return;
     };
-    let name = job.title.lock().await.clone();
+    let title = job.title.lock().await.clone();
     let hash = job.torrent.lock().await.hash.clone();
+    let filename = job.progress.lock().await.filename.clone();
     let _ = tokio::task::spawn_blocking(move || {
         let Ok(root) = std::fs::canonicalize(&folder) else {
             return;
         };
-        let safe_name = || {
-            let candidate = name.trim();
-            (!candidate.is_empty() && candidate != "Torrent" && !candidate.contains(['/', '\\']))
-                .then(|| candidate.to_string())
+        let safe_base = |value: &str| {
+            let base = value.rsplit(['/', '\\']).next().unwrap_or(value).trim();
+            (!base.is_empty() && base != "Torrent" && !base.contains(['/', '\\']))
+                .then(|| base.to_string())
         };
-        let mut candidates: Vec<String> = Vec::new();
-        if let Some(name) = safe_name() {
-            candidates.push(format!("{name}.aria2"));
+        let mut bases: Vec<String> = Vec::new();
+        for value in [Some(title.as_str()), filename.as_deref()]
+            .into_iter()
+            .flatten()
+        {
+            if let Some(base) = safe_base(value) {
+                if !bases.contains(&base) {
+                    bases.push(base);
+                }
+            }
         }
+        let mut candidates: Vec<String> =
+            bases.iter().map(|base| format!("{base}.aria2")).collect();
         if let Some(hash) =
             hash.filter(|h| h.len() == 40 && h.bytes().all(|byte| byte.is_ascii_hexdigit()))
         {
@@ -2121,7 +2132,7 @@ async fn remove_abandoned_torrent_artifacts(job: &Job) {
             }
         }
         // A multi-file torrent may have created its target folder already.
-        if let Some(name) = safe_name() {
+        if let Some(name) = bases.first() {
             if let Ok(folder) = std::fs::canonicalize(root.join(name)) {
                 let empty = folder.is_dir()
                     && std::fs::read_dir(&folder)
@@ -2174,12 +2185,11 @@ async fn run_aria2_job(app: AppHandle, job: Arc<Job>, daemon: Arc<Aria2Daemon>, 
                 }
             }
             let target = next_gid.unwrap_or_else(|| gid.clone());
-            let emptied_torrent = job.kind == JobKind::Torrent && payload_bytes == 0;
             let _ = daemon.force_remove(&target).await;
             drop(gate_guard.take());
-            if emptied_torrent {
-                remove_abandoned_torrent_artifacts(&job).await;
-            }
+            // Cancelling abandons the task, so the engine's control and
+            // metadata files are dead weight. Downloaded payload stays.
+            remove_aria2_bookkeeping(&job).await;
             clear_transfer_stats(&app, &job).await;
             set_status(&app, &job, JobStatus::Canceled, None).await;
             record_history(&app, &job, JobStatus::Canceled, payload_bytes as i64).await;
@@ -2829,7 +2839,7 @@ mod queue_tests {
     }
 
     #[tokio::test]
-    async fn canceled_torrent_cleanup_keeps_payload_files() {
+    async fn cancel_removes_bookkeeping_but_keeps_payload_files() {
         let root = std::env::temp_dir().join(format!("gruzly-cancel-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let hash = "7a42d4aa43a6a309fe5979e0a29320cf08bb1234";
@@ -2846,12 +2856,32 @@ mod queue_tests {
         job.kind = JobKind::Torrent;
         job.torrent.lock().await.hash = Some(hash.to_string());
 
-        remove_abandoned_torrent_artifacts(&job).await;
+        remove_aria2_bookkeeping(&job).await;
 
         assert!(!root.join(format!("{hash}.torrent")).exists());
         assert!(!root.join("Sample Pack.aria2").exists());
         assert!(!root.join("Sample Pack").exists());
         assert!(root.join("keep.bin").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancel_removes_control_file_for_direct_downloads() {
+        let root =
+            std::env::temp_dir().join(format!("gruzly-cancel-file-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("movie.mp4.aria2"), b"control").unwrap();
+        std::fs::write(root.join("movie.mp4"), b"partial").unwrap();
+
+        let job = base_job(
+            "https://example.org/movie.mp4".into(),
+            "movie.mp4".into(),
+            Some(root.to_string_lossy().to_string()),
+        );
+        remove_aria2_bookkeeping(&job).await;
+
+        assert!(!root.join("movie.mp4.aria2").exists());
+        assert!(root.join("movie.mp4").exists());
         std::fs::remove_dir_all(root).unwrap();
     }
 

@@ -150,6 +150,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - name: Publish the prepared draft as latest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

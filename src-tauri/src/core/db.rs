@@ -256,7 +256,7 @@ impl Db {
         conn.execute(
             "UPDATE history
              SET status = ?2,
-                 error = COALESCE(?6, error),
+                 error = CASE WHEN ?6 IS NULL AND ?2 IN ('queued','downloading','merging','paused','completed') THEN NULL ELSE COALESCE(?6, error) END,
                  started_at = COALESCE(started_at, ?3),
                  finished_at = CASE WHEN ?4 IN ('completed','failed','canceled','interrupted')
                                     THEN COALESCE(NULLIF(finished_at, 0), ?5) ELSE finished_at END
@@ -289,7 +289,7 @@ impl Db {
                  total_bytes = ?3,
                  filename = COALESCE(?4, filename),
                  save_path = COALESCE(?5, save_path),
-                 error = COALESCE(?6, error),
+                 error = CASE WHEN ?6 IS NULL AND ?2 IN ('queued','downloading','merging','paused','completed') THEN NULL ELSE COALESCE(?6, error) END,
                  finished_at = ?7
              WHERE id = ?1",
             rusqlite::params![

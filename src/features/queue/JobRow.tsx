@@ -34,6 +34,7 @@ export function JobRow({ job, compact = false }: { job: JobView; compact?: boole
   const { t } = useTranslation();
   const language = useUiStore((s) => s.language);
   const activity = useQueueStore((s) => s.activity.get(job.id));
+  const removeFromStore = useQueueStore((s) => s.removeJob);
   const active = job.status === "downloading" || job.status === "merging" || job.status === "queued";
   const seeding = job.status === "seeding";
   const percent =
@@ -149,7 +150,9 @@ export function JobRow({ job, compact = false }: { job: JobView; compact?: boole
                 label={t("common.removeFromList")}
                 danger
                 onClick={() => {
-                  void removeJob(job.id).catch(() => toast.warning(t("errors.generic")));
+                  void removeJob(job.id)
+                    .then(() => removeFromStore(job.id))
+                    .catch(() => toast.warning(t("errors.generic")));
                 }}
               />
               </>
@@ -163,6 +166,7 @@ export function JobRow({ job, compact = false }: { job: JobView; compact?: boole
           indeterminate={percent == null && job.status === "downloading"}
           tone="success"
           className="h-1"
+          label={`${job.title} progress`}
         />
       )}
       {job.status === "failed" && <ProgressBar value={1} tone="danger" className="h-1" />}

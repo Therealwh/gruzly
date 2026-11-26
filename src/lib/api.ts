@@ -352,6 +352,8 @@ export type ProgressEvent = {
 export type StateEvent = {
   id: string;
   status: JobStatus;
+  kind: JobKind;
+  engine: string;
   title: string | null;
   error: string | null;
 };

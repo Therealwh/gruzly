@@ -90,6 +90,8 @@ pub struct ProgressEvent {
 pub struct StateEvent {
     pub id: String,
     pub status: JobStatus,
+    pub kind: JobKind,
+    pub engine: String,
     pub title: Option<String>,
     pub error: Option<String>,
 }
@@ -437,6 +439,8 @@ async fn set_status(app: &AppHandle, job: &Job, status: JobStatus, error: Option
         StateEvent {
             id: job.id.clone(),
             status,
+            kind: job.kind,
+            engine: job.engine.clone(),
             title: Some(job.title.lock().await.clone()),
             error,
         },
@@ -517,6 +521,8 @@ async fn on_progress(app: &AppHandle, job: &Job, p: YtdlpProgress) {
             StateEvent {
                 id: job.id.clone(),
                 status,
+                kind: job.kind,
+                engine: job.engine.clone(),
                 title: None,
                 error: None,
             },
@@ -526,7 +532,7 @@ async fn on_progress(app: &AppHandle, job: &Job, p: YtdlpProgress) {
 
 fn emit_state(
     app: &AppHandle,
-    id: &str,
+    job: &Job,
     status: JobStatus,
     title: Option<String>,
     error: Option<String>,
@@ -534,8 +540,10 @@ fn emit_state(
     let _ = app.emit(
         EVENT_STATE,
         StateEvent {
-            id: id.to_string(),
+            id: job.id.clone(),
             status,
+            kind: job.kind,
+            engine: job.engine.clone(),
             title,
             error,
         },
@@ -639,7 +647,7 @@ pub async fn start_video(
         let _ = tokio::task::spawn_blocking(move || db2.upsert_history(&hist)).await;
     }
 
-    emit_state(&app, &id, JobStatus::Queued, Some(title.clone()), None);
+    emit_state(&app, &job, JobStatus::Queued, Some(title.clone()), None);
 
     let rank = rank_of(&queue, &job.id).await;
 
@@ -1139,13 +1147,7 @@ pub async fn restore_pending_jobs(app: AppHandle) -> usize {
             created_at: row.created_at,
         });
         register_job(&queue, job.clone()).await;
-        emit_state(
-            &app,
-            &row.id,
-            JobStatus::Paused,
-            Some(row.title.clone()),
-            None,
-        );
+        emit_state(&app, &job, JobStatus::Paused, Some(row.title.clone()), None);
         restored += 1;
     }
     if restored > 0 {
@@ -1305,15 +1307,15 @@ pub async fn start_file(
         j.kind = JobKind::File;
     }
 
+    register_job(&queue, job.clone()).await;
+    record_history_created(&app, &job).await;
     emit_state(
         &app,
-        &job.id,
+        &job,
         JobStatus::Queued,
         Some(job.title.lock().await.clone()),
         None,
     );
-    register_job(&queue, job.clone()).await;
-    record_history_created(&app, &job).await;
 
     let job_task = job.clone();
     let rank = rank_of(&queue, &job.id).await;
@@ -1390,7 +1392,7 @@ pub async fn start_torrent(
                             }
                             emit_state(
                                 &app,
-                                &job.id,
+                                &job,
                                 JobStatus::Queued,
                                 Some(job.title.lock().await.clone()),
                                 None,
@@ -1461,15 +1463,15 @@ pub async fn start_torrent(
         j.kind = JobKind::Torrent;
     }
 
+    register_job(&queue, job.clone()).await;
+    record_history_created(&app, &job).await;
     emit_state(
         &app,
-        &job.id,
+        &job,
         JobStatus::Queued,
         Some(job.title.lock().await.clone()),
         None,
     );
-    register_job(&queue, job.clone()).await;
-    record_history_created(&app, &job).await;
 
     let job_task = job.clone();
     let rank = rank_of(&queue, &job.id).await;
@@ -1583,6 +1585,8 @@ async fn run_aria2_job(
                 StateEvent {
                     id: job.id.clone(),
                     status: JobStatus::Queued,
+                    kind: job.kind,
+                    engine: job.engine.clone(),
                     title: Some(display_name.clone()),
                     error: None,
                 },

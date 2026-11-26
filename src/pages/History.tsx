@@ -39,17 +39,6 @@ type StatusFilter = "all" | "completed" | "failed" | "canceled" | "interrupted";
 type TypeFilter = "all" | "video" | "file" | "torrent";
 type SortDir = "new" | "old";
 
-const SINCE: Record<DateFilter, number | null> = {
-  all: null,
-  today: (() => {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    return d.getTime();
-  })(),
-  week: Date.now() - 7 * 86400_000,
-  month: Date.now() - 30 * 86400_000,
-};
-
 const STATUS_TONE: Record<string, "success" | "danger" | "warning" | "neutral" | "accent" | "info"> = {
   completed: "success",
   failed: "danger",
@@ -73,12 +62,28 @@ export function History() {
   const [sortDir, setSortDir] = useState<SortDir>("new");
   const [records, setRecords] = useState<HistoryRecord[] | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
+  const requestRef = useRef(0);
 
   const reload = useCallback(() => {
-    void listHistory({ query, kind, status, sinceMs: SINCE[dateFilter] })
-      .then(setRecords)
-      .catch(() => setRecords([]));
-  }, [query, kind, status, dateFilter]);
+    const request = ++requestRef.current;
+    const since = (() => {
+      if (dateFilter === "all") return null;
+      const now = Date.now();
+      if (dateFilter === "today") {
+        const d = new Date(now);
+        d.setHours(0, 0, 0, 0);
+        return d.getTime();
+      }
+      return now - (dateFilter === "week" ? 7 : 30) * 86400_000;
+    })();
+    void listHistory({ query, kind, status, sinceMs: since })
+      .then((next) => {
+        if (request === requestRef.current) setRecords(next);
+      })
+      .catch(() => {
+        if (request === requestRef.current) toast.error(t("errors.generic"));
+      });
+  }, [query, kind, status, dateFilter, t]);
 
   useEffect(() => {
     const h = window.setTimeout(reload, 200); // debounce search
@@ -266,7 +271,7 @@ function HistoryList({
   }, [records]);
 
   return (
-    <div ref={parentRef} className="h-full">
+    <div ref={parentRef} className="h-full overflow-y-auto">
       <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
         {virtualizer.getVirtualItems().map((vi) => {
           const r = records[vi.index];
@@ -332,7 +337,7 @@ function HistoryList({
                     )}
                   </div>
                 </div>
-                <div className="flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                <div className="flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                   <RowIconAction
                     icon={Download}
                     label={t("history.redownload")}

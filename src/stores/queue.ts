@@ -27,10 +27,9 @@ type QueueState = {
   dismissTorrent: () => void;
   /** Applies a drag-and-drop reordering (ids in their new display order). */
   applyOrder: (ids: string[]) => void;
+  removeJob: (id: string) => void;
   attach: () => Promise<() => void>;
 };
-
-let unlisten: UnlistenFn[] = [];
 
 /** System notification for completed/failed downloads (Settings-gated). */
 async function notifyOnTerminal(
@@ -73,11 +72,16 @@ export const useQueueStore = create<QueueState>((set, get) => ({
   hydrate: async () => {
     try {
       const jobs = await listJobs();
-      const map = new Map<string, JobView>();
-      for (const j of jobs) map.set(j.id, j);
-      set({ jobs: map, order: jobs.map((j) => j.id), connected: true });
+      const current = get();
+      const map = new Map(current.jobs);
+      for (const job of jobs) {
+        const live = map.get(job.id);
+        map.set(job.id, live ? { ...job, ...live } : job);
+      }
+      const snapshotOrder = jobs.map((job) => job.id);
+      const order = [...snapshotOrder, ...current.order.filter((id) => !map.has(id))];
+      set({ jobs: map, order, connected: true });
     } catch {
-      // browser mode or IPC hiccup — leave empty
       set({ connected: false });
     }
   },
@@ -120,8 +124,8 @@ export const useQueueStore = create<QueueState>((set, get) => ({
       const next = new Map(jobs);
       next.set(e.id, {
         id: e.id,
-        kind: "video",
-        engine: "yt-dlp",
+        kind: e.kind,
+        engine: e.engine,
         url: "",
         title: e.title,
         folder: null,
@@ -160,10 +164,15 @@ export const useQueueStore = create<QueueState>((set, get) => ({
     void setJobOrder(next).catch(() => undefined);
   },
 
+  removeJob: (id) => {
+    const next = new Map(get().jobs);
+    next.delete(id);
+    set({ jobs: next, order: get().order.filter((item) => item !== id) });
+  },
+
   attach: async () => {
-    // detach previous listeners first (StrictMode double-mount safe)
-    for (const fn of unlisten) fn();
-    unlisten = await Promise.all([
+    if (!isTauri()) return () => undefined;
+    const listeners: UnlistenFn[] = await Promise.all([
       listen<ProgressEvent>("job://progress", (e) => get().applyProgress(e.payload)),
       listen<StateEvent>("job://state", (e) => get().applyState(e.payload)),
       listen<TorrentReadyEvent>("torrent://ready", (e) => get().applyTorrentReady(e.payload)),
@@ -172,9 +181,11 @@ export const useQueueStore = create<QueueState>((set, get) => ({
       ),
     ]);
     set({ connected: true });
+    let active = true;
     return () => {
-      for (const fn of unlisten) fn();
-      unlisten = [];
+      if (!active) return;
+      active = false;
+      for (const fn of listeners) fn();
     };
   },
 }));

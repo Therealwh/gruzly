@@ -70,7 +70,7 @@ export function Downloads() {
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto py-3">
+      <div className="min-h-0 flex-1 py-3">
         {filtered.length === 0 ? (
           <EmptyState
             icon={Download}
@@ -111,7 +111,7 @@ function VirtualJobList({ jobs }: { jobs: JobView[] }) {
   };
 
   return (
-    <div ref={parentRef} className="h-full">
+    <div ref={parentRef} className="h-full overflow-y-auto">
       <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
         {virtualizer.getVirtualItems().map((vi) => {
           const job = jobs[vi.index];

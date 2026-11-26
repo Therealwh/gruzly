@@ -6,11 +6,13 @@ export function ProgressBar({
   indeterminate = false,
   className,
   tone = "accent",
+  label = "Progress",
 }: {
   value?: number;
   indeterminate?: boolean;
   className?: string;
   tone?: "accent" | "success" | "danger";
+  label?: string;
 }) {
   const pct = !indeterminate && typeof value === "number" && Number.isFinite(value)
     ? Math.min(Math.max(value, 0), 1) * 100
@@ -23,6 +25,7 @@ export function ProgressBar({
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={pct === null ? undefined : Math.round(pct)}
+      aria-label={label}
       className={cn("relative h-1.5 w-full overflow-hidden rounded-full bg-surface-3", className)}
     >
       {indeterminate ? (

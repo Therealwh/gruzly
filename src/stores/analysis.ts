@@ -14,6 +14,8 @@ type AnalysisState = {
   reset: () => void;
 };
 
+let analysisRequest = 0;
+
 export const useAnalysisStore = create<AnalysisState>((set) => ({
   pendingUrl: null,
   analyzing: false,
@@ -22,11 +24,14 @@ export const useAnalysisStore = create<AnalysisState>((set) => ({
   setPendingUrl: (url) => set({ pendingUrl: url }),
 
   analyze: async (url) => {
+    const request = ++analysisRequest;
     set({ analyzing: true, analysis: null, error: null });
     try {
       const analysis = await analyzeUrl(url);
+      if (request !== analysisRequest) return;
       set({ analysis, analyzing: false });
     } catch (e) {
+      if (request !== analysisRequest) return;
       if (e instanceof CommandError && e.code === "browserMode") {
         set({
           analyzing: false,

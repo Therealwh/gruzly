@@ -24,12 +24,15 @@ mkdirSync(OUT, { recursive: true });
 
 copyFileSync(join(TARGET, "gruzly.exe"), join(OUT, "Gruzly.exe"));
 
-// Sidecars land next to the app binary (Tauri renames them with the target triple).
-for (const name of readdirSync(TARGET)) {
-  if (/^(yt-dlp|aria2c|ffmpeg).*\.exe$/i.test(name)) {
-    copyFileSync(join(TARGET, name), join(OUT, name));
+const sidecars = readdirSync(TARGET).filter((name) => /^(yt-dlp|aria2c|ffmpeg).*\.exe$/i.test(name));
+for (const name of sidecars) copyFileSync(join(TARGET, name), join(OUT, name));
+for (const prefix of ["yt-dlp", "aria2c", "ffmpeg"]) {
+  if (!sidecars.some((name) => name.toLowerCase().startsWith(prefix))) {
+    throw new Error(`portable package missing ${prefix} sidecar`);
   }
 }
+copyFileSync(join(ROOT, "LICENSE"), join(OUT, "LICENSE"));
+copyFileSync(join(ROOT, "THIRD_PARTY_NOTICES.md"), join(OUT, "THIRD_PARTY_NOTICES.md"));
 
 const zip = join(ROOT, "portable", "Gruzly-portable-win64.zip");
 rmSync(zip, { force: true });

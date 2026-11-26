@@ -21,17 +21,15 @@ jobs:
       contents: write
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
+      release_id: ${{ steps.meta.outputs.release_id }}
     steps:
       - id: meta
         shell: bash
-        run: echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-      - name: Create release once
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release already exists; continuing idempotently."
-          else
+          echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$GITHUB_REF_NAME" \
               --repo "$GITHUB_REPOSITORY" \
               --title "Gruzly $GITHUB_REF_NAME" \
@@ -39,6 +37,8 @@ jobs:
               --verify-tag \
               --draft
           fi
+          release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" --jq .id)
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build & Publish (${{ matrix.os }})
@@ -47,6 +47,9 @@ jobs:
       contents: write
     strategy:
       fail-fast: false
+      # Sequential uploads let each platform merge its entry into latest.json
+      # without racing the others.
+      max-parallel: 1
       matrix:
         include:
           - os: windows-latest
@@ -90,10 +93,11 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           args: ${{ matrix.bundle_args }}
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           tagName: ${{ github.ref_name }}
           releaseName: "Gruzly ${{ github.ref_name }}"
           releaseBody: "See CHANGELOG.md. Download only content you own or have permission to save. Gruzly does not support or circumvent DRM."
-          releaseDraft: false
+          releaseDraft: true
           prerelease: false
           includeUpdaterJson: true
           updaterJsonPreferNsis: true
@@ -106,3 +110,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload $env:GITHUB_REF_NAME portable/Gruzly-portable-win64.zip --clobber
+
+  publish:
+    name: Publish release
+    needs: [create-release, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish the prepared draft as latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release edit "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft=false \
+            --latest

@@ -2075,9 +2075,9 @@ async fn clear_transfer_stats(app: &AppHandle, job: &Job) {
 }
 
 /// Removes aria2 bookkeeping left behind by a torrent that was cancelled
-/// before any file was selected: the `<info hash>.torrent` metadata file and
-/// the `<name>.aria2` control file. Payload files are never touched, and only
-/// entries inside the job's own destination folder are considered.
+/// before any payload byte arrived: the `<info hash>.torrent` metadata file
+/// and the `<name>.aria2` control file. Payload files are never touched, and
+/// only entries inside the job's own destination folder are considered.
 async fn remove_abandoned_torrent_artifacts(job: &Job) {
     if job.kind != JobKind::Torrent {
         return;
@@ -2158,22 +2158,31 @@ async fn run_aria2_job(app: AppHandle, job: Arc<Job>, daemon: Arc<Aria2Daemon>, 
             saw_pause = pause_sequence;
         }
         if job.cancel_requested.swap(false, Ordering::SeqCst) {
-            let target = daemon
-                .tell_status(&gid)
-                .await
-                .ok()
-                .and_then(|status| status.followed_by.into_iter().next())
-                .unwrap_or_else(|| gid.clone());
-            let unselected_torrent =
-                job.kind == JobKind::Torrent && !job.torrent_selected.load(Ordering::SeqCst);
+            let inspected = daemon.tell_status(&gid).await.ok();
+            let next_gid = inspected
+                .as_ref()
+                .and_then(|status| status.followed_by.first().cloned());
+            // A magnet parks metadata on the parent GID and transfers payload
+            // on the followed task, so read the byte count from the right one.
+            let mut payload_bytes = inspected
+                .as_ref()
+                .map(|status| status.completed())
+                .unwrap_or(0);
+            if let Some(child) = next_gid.as_deref() {
+                if let Ok(child) = daemon.tell_status(child).await {
+                    payload_bytes = child.completed();
+                }
+            }
+            let target = next_gid.unwrap_or_else(|| gid.clone());
+            let emptied_torrent = job.kind == JobKind::Torrent && payload_bytes == 0;
             let _ = daemon.force_remove(&target).await;
             drop(gate_guard.take());
-            if unselected_torrent {
+            if emptied_torrent {
                 remove_abandoned_torrent_artifacts(&job).await;
             }
             clear_transfer_stats(&app, &job).await;
             set_status(&app, &job, JobStatus::Canceled, None).await;
-            record_history(&app, &job, JobStatus::Canceled, 0).await;
+            record_history(&app, &job, JobStatus::Canceled, payload_bytes as i64).await;
             break;
         }
         if job.pause_requested.load(Ordering::SeqCst) {

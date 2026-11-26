@@ -96,8 +96,15 @@ impl Aria2Daemon {
         // Wait until the RPC answers (aria2 binds quickly; retry ~2s).
         for _ in 0..20 {
             if daemon.version().await.is_ok() {
-                log::info!("aria2 RPC ready on port {port}");
-                return Ok(daemon);
+                let mut child = daemon.child.lock().await;
+                if child.try_wait()?.is_none() {
+                    drop(child);
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    if daemon.version().await.is_ok() {
+                        log::info!("aria2 RPC ready on port {port}");
+                        return Ok(daemon);
+                    }
+                }
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }

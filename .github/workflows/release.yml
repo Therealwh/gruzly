@@ -29,11 +29,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "Gruzly $GITHUB_REF_NAME" \
-            --notes "See CHANGELOG.md for release notes. Download only content you own or have permission to save. Gruzly does not support or circumvent DRM." \
-            --verify-tag
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release already exists; continuing idempotently."
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Gruzly $GITHUB_REF_NAME" \
+              --notes "See CHANGELOG.md for release notes. Download only content you own or have permission to save. Gruzly does not support or circumvent DRM." \
+              --verify-tag \
+              --draft
+          fi
 
   build:
     name: Build & Publish (${{ matrix.os }})

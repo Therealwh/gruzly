@@ -177,6 +177,7 @@ pub fn run() {
             });
 
             let handle = app.handle().clone();
+            let _ = app.state::<AppState>().db.mark_interrupted();
             tray::build_tray(&handle, "en").expect("build tray");
 
             // Close-to-tray: hide the main window instead of exiting when

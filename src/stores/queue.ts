@@ -109,10 +109,14 @@ export const useQueueStore = create<QueueState>((set, get) => ({
       next.set(e.id, {
         ...existing,
         status: e.status,
-        error: e.error ?? existing.error,
+        kind: e.kind,
+        engine: e.engine,
+        error: e.error,
         title: e.title ?? existing.title,
       });
-      set({ jobs: next });
+      const activity = new Map(get().activity);
+      if (["completed", "failed", "canceled"].includes(e.status)) activity.delete(e.id);
+      set({ jobs: next, activity });
       if (e.status === "completed" && e.title) {
         import("@/components/ui").then(({ toast }) =>
           toast.success(`${t("toasts.downloadCompleted")} — ${e.title}`),
@@ -181,6 +185,7 @@ export const useQueueStore = create<QueueState>((set, get) => ({
       ),
     ]);
     set({ connected: true });
+    await get().hydrate();
     let active = true;
     return () => {
       if (!active) return;

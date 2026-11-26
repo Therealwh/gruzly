@@ -3,6 +3,12 @@
 All notable changes to Gruzly are documented here. Format: Keep a Changelog,
 versioning: SemVer.
 
+## [0.3.2] — 2026-11-26
+
+### Fixed
+- Hardened engine probing, aria2 readiness, queue state events, virtualized scrolling, stale async responses, and lifecycle cleanup after the full audit.
+- Added accessible progress labels, terminal activity cleanup, restart interruption marking, and portable package content checks.
+
 ## [0.3.1] — 2026-11-26
 
 ### Fixed

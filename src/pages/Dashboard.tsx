@@ -14,7 +14,7 @@ type Props = { onNavigate: (p: PageId) => void };
 export function Dashboard({ onNavigate }: Props) {
   const { t } = useTranslation();
   const setPendingUrl = useAnalysisStore((s) => s.setPendingUrl);
-  const { jobs, order, hydrate } = useQueueStore();
+  const { jobs, order } = useQueueStore();
   const [url, setUrl] = useState("");
   const [engines, setEngines] = useState<EngineInfo[] | null>(null);
 
@@ -22,8 +22,7 @@ export function Dashboard({ onNavigate }: Props) {
     void getEngineInfo()
       .then(setEngines)
       .catch(() => setEngines([]));
-    void hydrate();
-  }, [hydrate]);
+  }, []);
 
   const activeJobs = order
     .map((id) => jobs.get(id))

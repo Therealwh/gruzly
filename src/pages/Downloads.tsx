@@ -1,5 +1,5 @@
 import { Download, Search } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { EmptyState, Input, InputIcon, Tabs } from "@/components/ui";
@@ -12,13 +12,9 @@ type TabId = "active" | "queued" | "completed";
 /** Unified queue view — live via Rust events, virtualized for 1000+ rows. */
 export function Downloads() {
   const { t } = useTranslation();
-  const { jobs, order, hydrate } = useQueueStore();
+  const { jobs, order } = useQueueStore();
   const [tab, setTab] = useState<TabId>("active");
   const [query, setQuery] = useState("");
-
-  useEffect(() => {
-    void hydrate();
-  }, [hydrate]);
 
   const all = useMemo(
     () => order.map((id) => jobs.get(id)).filter((j): j is NonNullable<typeof j> => Boolean(j)),

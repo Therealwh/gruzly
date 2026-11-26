@@ -29,6 +29,7 @@
 - [Quick start](#-quick-start)
 - [Video preview](#-video-preview)
 - [Queue and history](#-queue-and-history)
+- [Browser and command line](#-browser-and-command-line)
 - [Settings and updates](#%EF%B8%8F-settings-and-updates)
 - [Architecture](#-architecture)
 - [Keyboard shortcuts](#%EF%B8%8F-keyboard-shortcuts)
@@ -136,10 +137,33 @@ current extractors.
   links, local paths and secrets.
 - **Completed downloads.** Grouped into Video, Files and Torrents. Each row can
   reveal its output in the folder or play a finished video in the system player.
+- **Archives.** A completed ZIP, 7z, TAR, TAR.GZ or GZ download can be unpacked
+  from the row menu or the details panel into a folder next to the archive.
+  RAR uses a system 7-Zip installation when one is present. Entries that try to
+  escape the destination are rejected, and the archive itself is never deleted.
 - **History.** A local SQLite database records every download from the moment
   it is added. Search, filter by status and type, sort, re-check files and
   export to CSV. Unfinished video jobs come back paused after a restart; direct
   file and torrent jobs have to be added again.
+
+## 🌐 Browser and command line
+
+Gruzly registers the `gruzly://` scheme on first launch — per user on Windows
+and Linux, from the app bundle on macOS — so a link can be handed to the app
+from a browser or a script.
+
+- **Browser extension.** Load the unpacked extension from
+  [`extension/`](extension/README.md) in Chrome or Edge. It adds a context-menu
+  item and a toolbar button that send the current page, link or video to
+  Gruzly. A Firefox build is produced with
+  `node extension/package-firefox.mjs`.
+- **Command line.** `gruzly "https://example.org/file.zip"` or
+  `gruzly "magnet:?xt=..."` hands the link to the running instance; if Gruzly
+  is closed, it starts and picks the link up.
+- **Accepted targets.** `http`, `https`, `ftp` and `magnet` links. `file:`,
+  `javascript:` and `data:` URLs are rejected.
+- Video pages open the preview; files and magnets go straight into the queue
+  with the configured folder.
 
 ## ⚙️ Settings and updates
 
@@ -153,6 +177,8 @@ current extractors.
   itself does not send cookies.
 - **Presets** stores custom profiles. Applying them automatically by domain is
   not wired yet; the preview uses its built-in quality presets.
+- **Auto-extract** unpacks finished archives when enabled under **Settings →
+  Downloads**.
 - **About** checks for signed app updates and verifies the update package
   signature. Portable builds update by extracting a newer ZIP.
 
@@ -196,10 +222,12 @@ the Control key on every platform.
 - [x] Queue priorities (drag and keyboard)
 - [x] Persistent history with search, filters and CSV export
 - [x] Torrent phase tracking, details panel and retry
+- [x] Archive extraction: ZIP, 7z, TAR, GZ (RAR via system 7-Zip)
 - [ ] Apply presets automatically by domain
 - [ ] Restore file and torrent jobs after a restart
-- [ ] Browser extension: catch video URLs mid-browse
-- [ ] `gruzly <url>` CLI
+- [x] Browser handoff: `gruzly://` links and a local extension
+- [ ] Publish the browser extension to the stores
+- [x] `gruzly <url>` CLI
 - [ ] Phone remote: send a link from mobile
 
 ## 🤝 Contributing

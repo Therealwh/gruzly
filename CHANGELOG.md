@@ -3,6 +3,17 @@
 All notable changes to Gruzly are documented here. Format: Keep a Changelog,
 versioning: SemVer.
 
+## [0.3.5] — 2026-11-27
+
+### Added
+- Browser and shell handoff: Gruzly registers the `gruzly://` scheme, accepts `gruzly <url>` from the command line, and ships an unpacked extension for Chrome, Edge and Firefox builds. Only `http`, `https`, `ftp` and `magnet` targets are accepted; `file:`, `javascript:` and `data:` URLs are rejected.
+- Archive extraction for completed downloads: ZIP, 7z, TAR, TAR.GZ and GZ are unpacked into a folder next to the archive. RAR is delegated to a system 7-Zip installation when present.
+- Optional automatic extraction after a download completes, controlled by a Switch under Settings → Downloads.
+- Extract action in the completed-row menu and in the details panel.
+
+### Security
+- Archive entries with absolute paths, parent components, drive prefixes or Windows reserved names are rejected, and symlink/hardlink entries are skipped, so extraction cannot write outside its destination folder.
+
 ## [0.3.4] — 2026-11-26
 
 ### Fixed

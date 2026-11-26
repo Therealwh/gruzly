@@ -29,15 +29,30 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$GITHUB_REF_NAME" \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "Gruzly $GITHUB_REF_NAME" \
-              --notes "See CHANGELOG.md for release notes. Download only content you own or have permission to save. Gruzly does not support or circumvent DRM." \
-              --verify-tag \
-              --draft
+          # gh api prints a JSON error body on stdout when it fails, so keep
+          # only a purely numeric id from every lookup.
+          release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" --jq .id 2>/dev/null || true)
+          case "$release_id" in ''|*[!0-9]*) release_id="" ;; esac
+          if [ -z "$release_id" ]; then
+            release_id=$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
+              -f tag_name="$GITHUB_REF_NAME" \
+              -f name="Gruzly $GITHUB_REF_NAME" \
+              -f body="See CHANGELOG.md for release notes. Download only content you own or have permission to save. Gruzly does not support or circumvent DRM." \
+              -F draft=true \
+              -F prerelease=false \
+              --jq .id 2>/dev/null || true)
+            case "$release_id" in ''|*[!0-9]*) release_id="" ;; esac
           fi
-          release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" --jq .id)
+          if [ -z "$release_id" ]; then
+            # Drafts are not returned by the tag endpoint, only by the list.
+            release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+              --jq '.[] | select(.tag_name=="'"$GITHUB_REF_NAME"'") | .id' | head -n1)
+            case "$release_id" in ''|*[!0-9]*) release_id="" ;; esac
+          fi
+          if [ -z "$release_id" ]; then
+            echo "Could not resolve the release for $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
           echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
 
   build:

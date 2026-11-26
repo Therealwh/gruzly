@@ -24,6 +24,10 @@ pub enum Aria2Error {
     Io(#[from] std::io::Error),
     #[error("rpc error: {0}")]
     Rpc(String),
+    #[error("rpc error: {0}: GID is not found")]
+    MissingGid(&'static str),
+    #[error("Connection to the torrent engine was lost ({0})")]
+    Transport(&'static str),
 }
 
 /// A running aria2 daemon with its connection details.
@@ -32,6 +36,7 @@ pub struct Aria2Daemon {
     pub port: u16,
     pub secret: String,
     pub download_dir: PathBuf,
+    client: reqwest::Client,
 }
 
 impl Aria2Daemon {
@@ -49,6 +54,7 @@ impl Aria2Daemon {
         let args: Vec<String> = vec![
             "--enable-rpc".into(),
             "--rpc-listen-all=false".into(),
+            "--rpc-max-request-size=16M".into(),
             format!("--rpc-listen-port={port}"),
             format!("--rpc-secret={secret}"),
             format!("--dir={}", download_dir.to_string_lossy()),
@@ -58,6 +64,8 @@ impl Aria2Daemon {
             // does not exist".
             "--allow-overwrite=true".into(),
             "--auto-file-renaming=false".into(),
+            // The app gate limits transfers. Metadata and seeding can run outside it.
+            "--max-concurrent-downloads=100".into(),
             "--file-allocation=none".into(),
             "--max-connection-per-server=16".into(),
             "--split=16".into(),
@@ -72,6 +80,12 @@ impl Aria2Daemon {
             // 6881-6999 range is fine: aria2 skips busy ports itself.
             "--quiet=true".into(),
         ];
+
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|e| Aria2Error::Rpc(e.to_string()))?;
 
         let mut cmd = Command::new(binary);
         #[cfg(windows)]
@@ -91,6 +105,7 @@ impl Aria2Daemon {
             port,
             secret,
             download_dir,
+            client,
         });
 
         // Wait until the RPC answers (aria2 binds quickly; retry ~2s).
@@ -116,9 +131,13 @@ impl Aria2Daemon {
         Err(Aria2Error::Rpc(detail))
     }
 
+    pub async fn is_running(&self) -> std::io::Result<bool> {
+        Ok(self.child.lock().await.try_wait()?.is_none())
+    }
+
     async fn rpc(
         &self,
-        method: &str,
+        method: &'static str,
         params: serde_json::Value,
     ) -> Result<serde_json::Value, Aria2Error> {
         let payload = json!({
@@ -127,28 +146,42 @@ impl Aria2Daemon {
             "method": format!("aria2.{method}"),
             "params": params,
         });
-        let client = reqwest::Client::new();
         let url = format!("http://127.0.0.1:{}/jsonrpc", self.port);
-        let resp = client
+        let resp = self
+            .client
             .post(url)
             .timeout(Duration::from_secs(5))
             .json(&payload)
             .send()
             .await
-            .map_err(|e| Aria2Error::Rpc(e.to_string()))?
-            .error_for_status()
-            .map_err(|e| Aria2Error::Rpc(e.to_string()))?
-            .json::<serde_json::Value>()
-            .await
-            .map_err(|e| Aria2Error::Rpc(e.to_string()))?;
-
-        if let Some(err) = resp.get("error") {
-            return Err(Aria2Error::Rpc(err.to_string()));
+            .map_err(|error| {
+                log::debug!(
+                    "aria2 RPC {method} transport error (connect: {}, timeout: {})",
+                    error.is_connect(),
+                    error.is_timeout()
+                );
+                Aria2Error::Transport(method)
+            })?;
+        let status = resp.status();
+        let body = resp.json::<serde_json::Value>().await;
+        if let Ok(ref body) = body {
+            if let Some(message) = body["error"]["message"].as_str() {
+                if matches!(method, "tellStatus" | "removeDownloadResult")
+                    && message.starts_with("GID ")
+                    && message.ends_with(" is not found")
+                {
+                    return Err(Aria2Error::MissingGid(method));
+                }
+                return Err(Aria2Error::Rpc(format!("{method}: {message}")));
+            }
         }
-        Ok(resp
+        if !status.is_success() {
+            return Err(Aria2Error::Rpc(format!("{method}: HTTP {status}")));
+        }
+        body.map_err(|e| Aria2Error::Rpc(e.to_string()))?
             .get("result")
             .cloned()
-            .unwrap_or(serde_json::Value::Null))
+            .ok_or_else(|| Aria2Error::Rpc(format!("{method}: missing RPC result")))
     }
 
     fn authed(&self, extra: serde_json::Value) -> serde_json::Value {
@@ -215,6 +248,10 @@ impl Aria2Daemon {
                         "totalLength",
                         "completedLength",
                         "downloadSpeed",
+                        "connections",
+                        "numSeeders",
+                        "uploadSpeed",
+                        "errorCode",
                         "files",
                         "bittorrent",
                         "errorMessage",
@@ -229,7 +266,7 @@ impl Aria2Daemon {
 
     /// Every task the daemon still remembers: active, waiting, stopped.
     pub async fn all_statuses(&self) -> Result<Vec<Aria2Status>, Aria2Error> {
-        let keys = ["gid", "status", "bittorrent", "infoHash"];
+        let keys = ["gid", "status", "infoHash", "followedBy"];
         let mut out = Vec::new();
         let active = self.rpc("tellActive", self.authed(json!([keys]))).await?;
         if let Some(list) = active.as_array() {
@@ -263,15 +300,17 @@ impl Aria2Daemon {
     }
 
     pub async fn pause(&self, gid: &str) -> Result<(), Aria2Error> {
-        self.rpc("pause", self.authed(json!([gid])))
+        self.rpc("forcePause", self.authed(json!([gid])))
             .await
             .map(|_| ())
     }
 
     pub async fn unpause(&self, gid: &str) -> Result<(), Aria2Error> {
-        self.rpc("unpause", self.authed(json!([gid])))
-            .await
-            .map(|_| ())
+        resume_with_status_check(
+            || self.rpc("unpause", self.authed(json!([gid]))),
+            || self.tell_status(gid),
+        )
+        .await
     }
 
     /// Moves a waiting/paused task to a 1-based position in aria2's queue.
@@ -305,6 +344,17 @@ impl Aria2Daemon {
             .map(|_| ())
     }
 
+    /// Removes only the engine's terminal result, keeping all files on disk.
+    pub async fn remove_result(&self, gid: &str) -> Result<(), Aria2Error> {
+        match self
+            .rpc("removeDownloadResult", self.authed(json!([gid])))
+            .await
+        {
+            Ok(_) | Err(Aria2Error::MissingGid(_)) => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
     /// Selects which files of a torrent to download (indices are 1-based).
     pub async fn select_files(&self, gid: &str, indices: &[u64]) -> Result<(), Aria2Error> {
         let joined = indices
@@ -331,6 +381,52 @@ impl Aria2Daemon {
     }
 }
 
+fn resume_applied(status: &Aria2Status) -> bool {
+    matches!(status.status.as_str(), "waiting" | "active" | "complete")
+}
+
+/// A dropped RPC response does not tell us whether aria2 applied the command.
+async fn resume_with_status_check<Resume, ResumeResult, Inspect, StatusResult>(
+    mut resume: Resume,
+    mut inspect: Inspect,
+) -> Result<(), Aria2Error>
+where
+    Resume: FnMut() -> ResumeResult,
+    ResumeResult: std::future::Future<Output = Result<serde_json::Value, Aria2Error>>,
+    Inspect: FnMut() -> StatusResult,
+    StatusResult: std::future::Future<Output = Result<Aria2Status, Aria2Error>>,
+{
+    let error = match resume().await {
+        Ok(_) => return Ok(()),
+        Err(error @ Aria2Error::Transport(_)) => error,
+        Err(error) => return Err(error),
+    };
+
+    let Ok(status) = inspect().await else {
+        return Err(error);
+    };
+    if resume_applied(&status) {
+        return Ok(());
+    }
+    if status.status == "error" {
+        return Err(Aria2Error::Rpc(status.error_message.unwrap_or_else(|| {
+            "aria2 reported an error while resuming the download".into()
+        })));
+    }
+    if status.status != "paused" {
+        return Err(error);
+    }
+
+    // Retry once only if aria2 still reports the same task as paused.
+    match resume().await {
+        Ok(_) => Ok(()),
+        Err(error) => match inspect().await {
+            Ok(status) if resume_applied(&status) => Ok(()),
+            _ => Err(error),
+        },
+    }
+}
+
 fn free_port() -> Result<u16, Aria2Error> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
     let port = listener.local_addr()?.port();
@@ -350,6 +446,15 @@ fn de_u64_lenient<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u64, D::Erro
         serde_json::Value::String(s) => Ok(s.parse().unwrap_or(0)),
         _ => Ok(0),
     }
+}
+
+fn de_optional_u64<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Error> {
+    let value = serde_json::Value::deserialize(d)?;
+    Ok(match value {
+        serde_json::Value::Number(n) => n.as_u64(),
+        serde_json::Value::String(s) => s.parse().ok(),
+        _ => None,
+    })
 }
 
 fn de_bool_lenient<'de, D: serde::Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
@@ -396,6 +501,14 @@ pub struct Aria2Status {
     pub completed_length: String,
     #[serde(default, rename = "downloadSpeed")]
     pub download_speed: String,
+    #[serde(default, deserialize_with = "de_optional_u64")]
+    pub connections: Option<u64>,
+    #[serde(default, rename = "numSeeders", deserialize_with = "de_optional_u64")]
+    pub seeders: Option<u64>,
+    #[serde(default, rename = "uploadSpeed", deserialize_with = "de_optional_u64")]
+    pub upload_speed: Option<u64>,
+    #[serde(default, rename = "errorCode", deserialize_with = "de_optional_u64")]
+    pub error_code: Option<u64>,
     #[serde(default, rename = "files")]
     pub files: Vec<Aria2File>,
     #[serde(default)]
@@ -449,6 +562,82 @@ impl Aria2Status {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::future::ready;
+
+    fn task_status(status: &str) -> Aria2Status {
+        Aria2Status {
+            status: status.into(),
+            ..Aria2Status::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn lost_unpause_reply_does_not_restart_an_active_task() {
+        let mut attempts = 0;
+        resume_with_status_check(
+            || {
+                attempts += 1;
+                ready(Err(Aria2Error::Transport("unpause")))
+            },
+            || ready(Ok(task_status("active"))),
+        )
+        .await
+        .unwrap();
+        assert_eq!(attempts, 1);
+    }
+
+    #[tokio::test]
+    async fn lost_unpause_reply_retries_a_still_paused_task_once() {
+        let mut attempts = 0;
+        resume_with_status_check(
+            || {
+                attempts += 1;
+                ready(if attempts == 1 {
+                    Err(Aria2Error::Transport("unpause"))
+                } else {
+                    Ok(json!("test-gid"))
+                })
+            },
+            || ready(Ok(task_status("paused"))),
+        )
+        .await
+        .unwrap();
+        assert_eq!(attempts, 2);
+    }
+
+    #[tokio::test]
+    async fn lost_unpause_reply_is_preserved_if_the_daemon_is_unreachable() {
+        let mut attempts = 0;
+        let result = resume_with_status_check(
+            || {
+                attempts += 1;
+                ready(Err(Aria2Error::Transport("unpause")))
+            },
+            || ready(Err(Aria2Error::Transport("tellStatus"))),
+        )
+        .await;
+        assert!(matches!(result, Err(Aria2Error::Transport("unpause"))));
+        assert_eq!(attempts, 1);
+    }
+
+    #[test]
+    fn parses_optional_torrent_stats_without_confusing_zero_and_missing() {
+        let status: Aria2Status = serde_json::from_value(json!({
+            "gid": "abc", "status": "error", "connections": "0",
+            "numSeeders": 3, "uploadSpeed": "2048", "errorCode": "24"
+        }))
+        .unwrap();
+        let wire = serde_json::to_value(status).unwrap();
+        assert_eq!(wire["connections"], 0);
+        assert_eq!(wire["numSeeders"], 3);
+        assert_eq!(wire["uploadSpeed"], 2048);
+        assert_eq!(wire["errorCode"], 24);
+        let empty: Aria2Status = serde_json::from_value(json!({
+            "gid": "abc", "status": "paused", "uploadSpeed": "invalid"
+        }))
+        .unwrap();
+        assert!(serde_json::to_value(empty).unwrap()["uploadSpeed"].is_null());
+    }
 
     #[test]
     fn parses_status_fields() {

@@ -104,11 +104,15 @@
     }
   },
   "downloads": {
+    "rowActions": "Actions for {{title}}",
+    "showInFolder": "Show in folder",
+    "playVideo": "Play",
     "title": "Downloads",
     "tabs": {
       "active": "Active",
       "queued": "Queued",
-      "completed": "Completed"
+      "completed": "Completed",
+      "errors": "Errors"
     },
     "searchPlaceholder": "Search downloads…",
     "filterAll": "All",
@@ -121,7 +125,11 @@
       "queued": "Queue is empty",
       "queuedHint": "Tasks waiting to start will show up here",
       "completed": "Nothing completed yet",
-      "completedHint": "Finished downloads will be listed here"
+      "completedHint": "Finished downloads will be listed here",
+      "errors": "No failed downloads",
+      "errorsHint": "Failed downloads will show up here",
+      "noResults": "Nothing found",
+      "noResultsHint": "Try another search or change the download type"
     },
     "limits": {
       "speedLimit": "Speed limit",
@@ -140,8 +148,45 @@
       "eta": "Time remaining",
       "peers": "Peers",
       "seeds": "Seeds",
-      "ratio": "Ratio"
-    }
+      "ratio": "Ratio",
+      "connections": "Connections",
+      "seeders": "Connected seeders",
+      "folder": "Folder",
+      "selectedFiles": "Selected files",
+      "loadingFiles": "Loading files…",
+      "filesUnavailable": "File list is unavailable",
+      "filesSummary": "{{count}} selected · {{size}}",
+      "moreFiles": "Show {{count}} more",
+      "engineError": "Engine error"
+    },
+    "columns": {
+      "task": "Task",
+      "progress": "Progress",
+      "actions": "Actions"
+    },
+    "summary": {
+      "downloadSpeed": "Download",
+      "uploadSpeed": "Upload",
+      "slots": "Slots"
+    },
+    "reorder": {
+      "handle": "Reorder {{title}}",
+      "hint": "Press Enter or Space to pick up or drop. Use the Up and Down arrow keys to move, or Escape to cancel.",
+      "moved": "{{title}} moved to position {{position}} of {{count}}",
+      "position": "{{title}}, position {{position}} of {{count}}"
+    },
+    "phase": {
+      "metadata": "Getting metadata…",
+      "selectFiles": "Waiting for file selection",
+      "waitingForPeers": "Waiting for peers…",
+      "waitingForSlot": "Waiting for a download slot"
+    },
+    "copyDetails": "Copy details",
+    "retryWithTorrent": "Choose the original .torrent file",
+    "retryQueued": "Download queued again",
+    "retryFailed": "Could not retry the download",
+    "detailsCopied": "Diagnostic details copied",
+    "selectionConfirmed": "Files selected. Download queued."
   },
   "video": {
     "title": "Video",
@@ -434,6 +479,8 @@
     "copiedPath": "Path copied"
   },
   "errors": {
+    "playDownload": "Could not play the downloaded video.",
+    "openDownloadFolder": "Could not open the download folder.",
     "title": "Something went wrong",
     "generic": "Unexpected error. Please try again.",
     "retry": "Retry",

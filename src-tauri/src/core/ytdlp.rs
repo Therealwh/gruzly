@@ -272,6 +272,32 @@ pub fn ffmpeg_time_seconds(line: &str) -> Option<f64> {
     }
 }
 
+/// FFmpeg prints cumulative output size beside its media timestamp.
+pub fn ffmpeg_output_bytes(line: &str) -> Option<f64> {
+    let (_, value) = line.split_once("size=")?;
+    let value = value.split_whitespace().next()?;
+    let unit_start = value.find(|c: char| !c.is_ascii_digit() && c != '.')?;
+    let size: f64 = value[..unit_start].parse().ok()?;
+    let multiplier = match &value[unit_start..] {
+        "B" => 1.0,
+        "kB" | "KiB" => 1024.0,
+        "MB" | "MiB" => 1024.0 * 1024.0,
+        "GB" | "GiB" => 1024.0 * 1024.0 * 1024.0,
+        _ => return None,
+    };
+    Some(size * multiplier).filter(|bytes| bytes.is_finite())
+}
+
+pub const PROGRESS_PREFIX: &str = "gruzly-progress:";
+pub const OUTPUT_PREFIX: &str = "gruzly-output:";
+
+pub fn parse_download_progress(line: &str) -> Option<YtdlpProgress> {
+    let line = line.trim();
+    let json = line.strip_prefix(PROGRESS_PREFIX).unwrap_or(line);
+    let progress: YtdlpProgress = serde_json::from_str(json).ok()?;
+    progress.status.is_some().then_some(progress)
+}
+
 /// Only known browsers for --cookies-from-browser (IPC values are untrusted).
 pub fn validate_cookies_browser(browser: &str) -> Result<(), YtdlpError> {
     if COOKIE_BROWSERS.contains(&browser.to_lowercase().as_str()) {
@@ -542,12 +568,12 @@ pub struct VideoDownloadSpec {
 
 fn de_f64_lenient<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<f64>, D::Error> {
     let value = serde_json::Value::deserialize(d)?;
-    match value {
-        serde_json::Value::Number(number) => Ok(number.as_f64()),
-        serde_json::Value::String(text) => Ok(text.parse::<f64>().ok()),
-        serde_json::Value::Null => Ok(None),
-        _ => Ok(None),
-    }
+    let number = match value {
+        serde_json::Value::Number(number) => number.as_f64(),
+        serde_json::Value::String(text) => text.parse::<f64>().ok(),
+        _ => None,
+    };
+    Ok(number.filter(|number| number.is_finite() && *number >= 0.0))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -627,7 +653,13 @@ pub fn download_args(
         "--downloader".into(),
         "m3u8:ffmpeg".into(),
         "--progress-template".into(),
-        "download:%(progress)j".into(),
+        format!("download:{PROGRESS_PREFIX}%(progress)j"),
+        "--progress".into(),
+        "--no-simulate".into(),
+        "--print".into(),
+        format!("after_move:{OUTPUT_PREFIX}%(filepath)j"),
+        "--downloader-args".into(),
+        "ffmpeg:-stats".into(),
         // Keep readable unicode filenames; yt-dlp sanitizes illegal chars
         // per-platform itself (--restrict-filenames would mangle Cyrillic).
     ];
@@ -751,7 +783,7 @@ mod tests {
             .iter()
             .position(|a| a == "--progress-template")
             .unwrap();
-        assert_eq!(args[idx + 1], "download:%(progress)j");
+        assert_eq!(args[idx + 1], "download:gruzly-progress:%(progress)j");
     }
 
     #[test]

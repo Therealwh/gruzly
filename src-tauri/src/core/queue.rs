@@ -8,7 +8,7 @@
 //! This keeps killing race-free without sharing the child handle.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
@@ -17,13 +17,13 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager, State};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::{Mutex, Notify};
 
 static YTDLP_UPDATE_LOCK: Mutex<()> = Mutex::const_new(());
 
-use super::aria2::Aria2Daemon;
+use super::aria2::{Aria2Daemon, Aria2Error, Aria2Status};
 use super::db::HistoryRecord;
 use super::engines;
 use super::ytdlp::{self, VideoDownloadSpec, YtdlpProgress};
@@ -68,10 +68,19 @@ pub struct JobView {
     pub filename: Option<String>,
     pub status: JobStatus,
     pub error: Option<String>,
+    pub error_code: Option<u64>,
+    pub torrent_phase: Option<TorrentPhase>,
+    pub thumbnail: Option<String>,
+    pub can_retry: bool,
+    pub retry_needs_torrent: bool,
     pub downloaded_bytes: f64,
     pub total_bytes: Option<f64>,
+    pub fraction: Option<f64>,
     pub speed: f64,
     pub eta: f64,
+    pub connections: Option<u64>,
+    pub seeders: Option<u64>,
+    pub upload_speed: Option<u64>,
     pub created_at: i64,
 }
 
@@ -81,8 +90,12 @@ pub struct ProgressEvent {
     pub id: String,
     pub downloaded_bytes: f64,
     pub total_bytes: Option<f64>,
+    pub fraction: Option<f64>,
     pub speed: f64,
     pub eta: f64,
+    pub connections: Option<u64>,
+    pub seeders: Option<u64>,
+    pub upload_speed: Option<u64>,
 }
 
 #[derive(Serialize, Clone)]
@@ -93,11 +106,33 @@ pub struct StateEvent {
     pub kind: JobKind,
     pub engine: String,
     pub title: Option<String>,
+    pub folder: Option<String>,
+    pub filename: Option<String>,
     pub error: Option<String>,
+    pub error_code: Option<u64>,
+    pub torrent_phase: Option<TorrentPhase>,
+    pub thumbnail: Option<String>,
+    pub can_retry: bool,
+    pub retry_needs_torrent: bool,
 }
 
 pub const EVENT_PROGRESS: &str = "job://progress";
 pub const EVENT_STATE: &str = "job://state";
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TorrentPhase {
+    Metadata,
+    SelectFiles,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueSlots {
+    pub in_use: u32,
+    pub limit: u32,
+}
+
+pub const EVENT_SLOTS: &str = "queue://slots";
 pub const EVENT_ACTIVITY: &str = "job://activity";
 const EMIT_INTERVAL: Duration = Duration::from_millis(250); // ≤4 renders/sec
 
@@ -105,8 +140,12 @@ const EMIT_INTERVAL: Duration = Duration::from_millis(250); // ≤4 renders/sec
 struct Progress {
     downloaded: f64,
     total: Option<f64>,
+    fraction: Option<f64>,
     speed: f64,
     eta: f64,
+    connections: Option<u64>,
+    seeders: Option<u64>,
+    upload_speed: Option<u64>,
     filename: Option<String>,
     last_emit: Option<Instant>,
 }
@@ -120,14 +159,19 @@ struct Job {
     title: Mutex<String>,
     /// Preview image URL (video) — for history records.
     thumbnail: Option<String>,
+    torrent_phase: StdMutex<Option<TorrentPhase>>,
+    torrent: Mutex<TorrentData>,
+    control: Mutex<()>,
     folder: Option<String>,
-    status: Mutex<(JobStatus, Option<String>)>, // status + error
+    status: Mutex<(JobStatus, Option<String>, Option<u64>)>, // status + error + engine code
     progress: Mutex<Progress>,
     spec: Option<VideoDownloadSpec>,
     /// aria2 gid for file/torrent jobs; None for video jobs.
     gid: Mutex<Option<String>>,
+    daemon: Mutex<std::sync::Weak<Aria2Daemon>>,
     kill: Arc<Notify>,
     pause_requested: AtomicBool,
+    pause_sequence: std::sync::atomic::AtomicU64,
     cancel_requested: AtomicBool,
     /// Torrent metadata is held paused until the file-selection modal confirms.
     torrent_selected: AtomicBool,
@@ -143,17 +187,6 @@ fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Display rank of a job: its position in the queue order. Unknown ids go last.
-async fn rank_of(queue: &QueueManager, id: &str) -> usize {
-    queue
-        .order
-        .lock()
-        .await
-        .iter()
-        .position(|x| x == id)
-        .unwrap_or(usize::MAX)
-}
-
 fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
@@ -164,30 +197,53 @@ fn now_ms() -> i64 {
 struct GateState {
     limit: u32,
     in_use: u32,
-    pending: Vec<(u64, usize)>, // (token, rank)
+    pending: Vec<(u64, String)>, // (token, job id)
+    ranks: HashMap<String, usize>,
 }
 
 pub struct Gate {
     state: StdMutex<GateState>,
     next_token: std::sync::atomic::AtomicU64,
     notify: Notify,
+    slots: tokio::sync::watch::Sender<QueueSlots>,
 }
 
 impl Gate {
     fn new(initial: u32) -> Self {
+        let limit = initial.max(1);
         Self {
             state: StdMutex::new(GateState {
-                limit: initial.max(1),
+                limit,
                 in_use: 0,
                 pending: Vec::new(),
+                ranks: HashMap::new(),
             }),
             next_token: std::sync::atomic::AtomicU64::new(0),
             notify: Notify::new(),
+            slots: tokio::sync::watch::channel(QueueSlots { in_use: 0, limit }).0,
         }
     }
 
+    fn snapshot(&self) -> QueueSlots {
+        *self.slots.borrow()
+    }
+
+    fn publish(&self, state: &GateState) {
+        let slots = QueueSlots {
+            in_use: state.in_use,
+            limit: state.limit,
+        };
+        self.slots.send_if_modified(|previous| {
+            if *previous == slots {
+                return false;
+            }
+            *previous = slots;
+            true
+        });
+    }
+
     /// Registers a waiting job and returns its ticket token.
-    fn register(&self, rank: usize) -> u64 {
+    fn register(&self, id: &str) -> u64 {
         let token = self
             .next_token
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -195,8 +251,8 @@ impl Gate {
             .lock()
             .expect("gate lock")
             .pending
-            .push((token, rank));
-        self.notify.notify_one();
+            .push((token, id.to_owned()));
+        self.notify.notify_waiters();
         token
     }
 
@@ -205,15 +261,16 @@ impl Gate {
         let is_next = state
             .pending
             .iter()
-            .min_by_key(|(_, rank)| *rank)
+            .min_by_key(|(_, id)| state.ranks.get(id).copied().unwrap_or(usize::MAX))
             .map(|(candidate, _)| *candidate == token)
             .unwrap_or(false);
         if !is_next || state.in_use >= state.limit {
             return false;
         }
         state.in_use += 1;
+        self.publish(&state);
         state.pending.retain(|(candidate, _)| *candidate != token);
-        self.notify.notify_one();
+        self.notify.notify_waiters();
         true
     }
 
@@ -223,19 +280,32 @@ impl Gate {
             .expect("gate lock")
             .pending
             .retain(|(candidate, _)| *candidate != token);
-        self.notify.notify_one();
+        self.notify.notify_waiters();
     }
 
     fn release(&self) {
         let mut state = self.state.lock().expect("gate lock");
         state.in_use = state.in_use.saturating_sub(1);
+        self.publish(&state);
         drop(state);
-        self.notify.notify_one();
+        self.notify.notify_waiters();
+    }
+
+    fn set_order(&self, ids: &[String]) {
+        self.state.lock().expect("gate lock").ranks = ids
+            .iter()
+            .enumerate()
+            .map(|(rank, id)| (id.clone(), rank))
+            .collect();
+        self.notify.notify_waiters();
     }
 
     fn set_limit(&self, n: u32) {
-        self.state.lock().expect("gate lock").limit = n.max(1);
-        self.notify.notify_one();
+        let mut state = self.state.lock().expect("gate lock");
+        state.limit = n.max(1);
+        self.publish(&state);
+        drop(state);
+        self.notify.notify_waiters();
     }
 }
 
@@ -253,17 +323,17 @@ impl Drop for GateGuard {
 impl GateGuard {
     /// Registers with the job's display rank, waits in order, and removes its
     /// ticket when pause/cancel arrives while still queued.
-    async fn acquire_rank(gate: Arc<Gate>, rank: usize, job: &Job) -> Option<Self> {
-        let token = gate.register(rank);
+    async fn acquire(gate: Arc<Gate>, job: &Job) -> Option<Self> {
+        let token = gate.register(&job.id);
         loop {
+            let gate_wake = gate.notify.notified();
+            let kill_wake = job.kill.notified();
             if job.pause_requested.load(Ordering::SeqCst)
                 || job.cancel_requested.load(Ordering::SeqCst)
             {
                 gate.cancel(token);
                 return None;
             }
-            let gate_wake = gate.notify.notified();
-            let kill_wake = job.kill.notified();
             if gate.try_acquire(token) {
                 drop(gate_wake);
                 drop(kill_wake);
@@ -287,6 +357,7 @@ pub struct QueueManager {
     order: Mutex<Vec<String>>,
     gate: Arc<Gate>,
     processes: Mutex<ProcessRegistry>,
+    aria_add: Mutex<()>,
     process_exit: Notify,
 }
 
@@ -302,12 +373,27 @@ impl QueueManager {
             jobs: Mutex::new(HashMap::new()),
             order: Mutex::new(Vec::new()),
             gate: Arc::new(Gate::new(3)), // parallel limit; adjustable from Settings
+            aria_add: Mutex::new(()),
             processes: Mutex::new(ProcessRegistry {
                 shutting_down: false,
                 ytdlp: HashMap::new(),
             }),
             process_exit: Notify::new(),
         }
+    }
+
+    pub fn slots(&self) -> QueueSlots {
+        self.gate.snapshot()
+    }
+
+    pub fn emit_slot_changes(&self, app: AppHandle) {
+        let mut slots = self.gate.slots.subscribe();
+        tauri::async_runtime::spawn(async move {
+            while slots.changed().await.is_ok() {
+                let snapshot = *slots.borrow_and_update();
+                let _ = app.emit(EVENT_SLOTS, snapshot);
+            }
+        });
     }
 
     async fn spawn_ytdlp_child(
@@ -384,6 +470,24 @@ impl QueueManager {
     }
 }
 
+impl Job {
+    fn phase(&self) -> Option<TorrentPhase> {
+        *self.torrent_phase.lock().expect("torrent phase lock")
+    }
+
+    fn set_phase(&self, phase: Option<TorrentPhase>) {
+        *self.torrent_phase.lock().expect("torrent phase lock") = phase;
+    }
+
+    fn retry_needs_torrent(&self, status: &JobStatus) -> bool {
+        *status == JobStatus::Failed && self.kind == JobKind::Torrent && self.url == "torrent"
+    }
+
+    fn can_retry(&self, status: &JobStatus) -> bool {
+        *status == JobStatus::Failed && (self.spec.is_some() || self.engine == "aria2")
+    }
+}
+
 async fn job_view(job: &Job) -> JobView {
     let status = job.status.lock().await.clone();
     let progress = job.progress.lock().await.clone();
@@ -395,21 +499,47 @@ async fn job_view(job: &Job) -> JobView {
         title: job.title.lock().await.clone(),
         folder: job.folder.clone(),
         filename: progress.filename.clone(),
+        can_retry: job.can_retry(&status.0),
+        retry_needs_torrent: job.retry_needs_torrent(&status.0),
+        torrent_phase: job.phase(),
+        thumbnail: job.thumbnail.clone(),
         status: status.0,
         error: status.1,
+        error_code: status.2,
         downloaded_bytes: progress.downloaded,
         total_bytes: progress.total,
+        fraction: progress.fraction,
         speed: progress.speed,
         eta: progress.eta,
+        connections: progress.connections,
+        seeders: progress.seeders,
+        upload_speed: progress.upload_speed,
         created_at: job.created_at,
     }
 }
 
 async fn set_status(app: &AppHandle, job: &Job, status: JobStatus, error: Option<String>) {
+    set_status_with_code(app, job, status, error, None).await;
+}
+
+async fn set_status_with_code(
+    app: &AppHandle,
+    job: &Job,
+    status: JobStatus,
+    error: Option<String>,
+    error_code: Option<u64>,
+) {
+    if matches!(
+        status,
+        JobStatus::Failed | JobStatus::Canceled | JobStatus::Completed
+    ) {
+        job.set_phase(None);
+    }
     {
         let mut s = job.status.lock().await;
         s.0 = status.clone();
         s.1 = error.clone();
+        s.2 = error_code;
     }
     // Keep the persistent history in sync with every transition; started_at
     // is stamped the first time a job actually downloads.
@@ -435,17 +565,8 @@ async fn set_status(app: &AppHandle, job: &Job, status: JobStatus, error: Option
         })
         .await;
     }
-    let _ = app.emit(
-        EVENT_STATE,
-        StateEvent {
-            id: job.id.clone(),
-            status,
-            kind: job.kind,
-            engine: job.engine.clone(),
-            title: Some(job.title.lock().await.clone()),
-            error,
-        },
-    );
+    let title = job.title.lock().await.clone();
+    emit_state(app, job, status, Some(title), error).await;
 }
 
 /// Throttled live status line to the UI (used by stdout notes and stderr).
@@ -456,96 +577,154 @@ fn emit_activity(app: &AppHandle, id: &str, text: &str) {
     );
 }
 
-async fn on_progress(app: &AppHandle, job: &Job, p: YtdlpProgress) {
-    let mut transitioning_to_merge = false;
-    {
-        let mut progress = job.progress.lock().await;
-        if let Some(d) = p.downloaded_bytes {
-            progress.downloaded = d;
-        }
-        match p.total() {
-            Some(t) => progress.total = Some(t),
-            None => {
-                // Fragmented protocols (m3u8/DASH) ship no total: derive one
-                // from fragment progress so the bar and size stay visible.
-                if let (Some(idx), Some(count)) = (p.fragment_index, p.fragment_count) {
-                    if count > 0 && idx > 0 {
-                        let frac = idx as f64 / count as f64;
-                        if frac > 0.02 && progress.downloaded > 0.0 {
-                            progress.total = Some(progress.downloaded / frac);
-                        }
-                    }
-                }
-            }
-        }
-        if let Some(s) = p.speed {
-            progress.speed = s;
-        }
-        if let Some(e) = p.eta {
-            progress.eta = e;
-        }
-        if let Some(f) = p.filename.clone() {
-            progress.filename = Some(f);
-        }
-
-        let throttled = progress
+fn emit_progress(app: &AppHandle, job: &Job, progress: &mut Progress, force: bool) {
+    if !force
+        && progress
             .last_emit
-            .map(|t| t.elapsed() >= EMIT_INTERVAL)
-            .unwrap_or(true);
-        if throttled {
-            progress.last_emit = Some(Instant::now());
-            let _ = app.emit(
-                EVENT_PROGRESS,
-                ProgressEvent {
-                    id: job.id.clone(),
-                    downloaded_bytes: progress.downloaded,
-                    total_bytes: progress.total,
-                    speed: progress.speed,
-                    eta: progress.eta,
-                },
-            );
-        }
+            .is_some_and(|at| at.elapsed() < EMIT_INTERVAL)
+    {
+        return;
     }
+    progress.last_emit = Some(Instant::now());
+    let _ = app.emit(
+        EVENT_PROGRESS,
+        ProgressEvent {
+            id: job.id.clone(),
+            downloaded_bytes: progress.downloaded,
+            total_bytes: progress.total,
+            fraction: progress.fraction,
+            speed: progress.speed,
+            eta: progress.eta,
+            connections: progress.connections,
+            seeders: progress.seeders,
+            upload_speed: progress.upload_speed,
+        },
+    );
+}
 
-    // "finished" on the last stream means post-processing (mux) begins.
-    if p.status.as_deref() == Some("finished") {
-        let mut status = job.status.lock().await;
-        if status.0 == JobStatus::Downloading {
-            status.0 = JobStatus::Merging;
-            transitioning_to_merge = true;
+async fn on_progress(app: &AppHandle, job: &Job, p: YtdlpProgress) {
+    let mut progress = job.progress.lock().await;
+    let total = p.total();
+    if let Some(filename) = p.filename {
+        if progress
+            .filename
+            .as_ref()
+            .is_some_and(|previous| previous != &filename)
+            && p.status.as_deref() == Some("downloading")
+        {
+            let last_emit = progress.last_emit;
+            *progress = Progress {
+                last_emit,
+                ..Progress::default()
+            };
+        }
+        progress.filename = Some(filename);
+    }
+    if let Some(bytes) = p.downloaded_bytes {
+        progress.downloaded = bytes;
+    }
+    if let Some(total) = total.filter(|total| *total > 0.0) {
+        progress.total = Some(total);
+    } else if let (Some(index), Some(count)) = (p.fragment_index, p.fragment_count) {
+        if count > 0 && index > 0 {
+            progress.fraction = Some((index as f64 / count as f64).min(1.0));
         }
     }
-    if transitioning_to_merge {
-        let (status, _) = job.status.lock().await.clone();
-        let _ = app.emit(
-            EVENT_STATE,
-            StateEvent {
-                id: job.id.clone(),
-                status,
-                kind: job.kind,
-                engine: job.engine.clone(),
-                title: None,
-                error: None,
-            },
-        );
+    if let Some(speed) = p.speed {
+        progress.speed = speed;
+    }
+    if let Some(eta) = p.eta {
+        progress.eta = eta;
+    }
+    emit_progress(app, job, &mut progress, false);
+}
+
+/// FFmpeg uses carriage returns for live statistics and newlines for diagnostics.
+async fn read_engine_record(
+    reader: &mut (impl AsyncBufRead + Unpin),
+) -> std::io::Result<Option<String>> {
+    let mut record = Vec::new();
+    loop {
+        let bytes = reader.fill_buf().await?;
+        if bytes.is_empty() {
+            return Ok((!record.is_empty()).then(|| String::from_utf8_lossy(&record).into_owned()));
+        }
+        let end = bytes.iter().position(|byte| matches!(byte, b'\r' | b'\n'));
+        let length = end.unwrap_or(bytes.len());
+        record.extend_from_slice(&bytes[..length.min(256 * 1024 - record.len())]);
+        reader.consume(length + usize::from(end.is_some()));
+        if end.is_some() {
+            return Ok(Some(String::from_utf8_lossy(&record).into_owned()));
+        }
     }
 }
 
-fn emit_state(
+#[derive(Default)]
+struct FfmpegProgress {
+    sample: Option<(Instant, f64, f64)>,
+}
+
+impl FfmpegProgress {
+    fn update(
+        &mut self,
+        progress: &mut Progress,
+        record: &str,
+        duration: Option<f64>,
+        now: Instant,
+    ) -> bool {
+        let Some(seconds) = ytdlp::ffmpeg_time_seconds(record) else {
+            return false;
+        };
+        let Some(bytes) = ytdlp::ffmpeg_output_bytes(record) else {
+            return false;
+        };
+        progress.downloaded = bytes;
+        if let Some(duration) = duration {
+            progress.fraction = Some((seconds / duration).clamp(0.0, 1.0));
+        }
+        if let Some((at, old_bytes, old_seconds)) = self.sample {
+            let elapsed = now.duration_since(at).as_secs_f64();
+            if elapsed > 0.0 && bytes >= old_bytes {
+                progress.speed = (bytes - old_bytes) / elapsed;
+                if let Some(duration) = duration.filter(|_| seconds > old_seconds) {
+                    progress.eta =
+                        (duration - seconds).max(0.0) * elapsed / (seconds - old_seconds);
+                }
+            }
+        }
+        self.sample = Some((now, bytes, seconds));
+        true
+    }
+}
+
+async fn emit_state(
     app: &AppHandle,
     job: &Job,
     status: JobStatus,
     title: Option<String>,
     error: Option<String>,
 ) {
+    let filename = if status == JobStatus::Completed {
+        job.progress.lock().await.filename.clone()
+    } else {
+        None
+    };
+    let error_code = job.status.lock().await.2;
     let _ = app.emit(
         EVENT_STATE,
         StateEvent {
             id: job.id.clone(),
+            can_retry: job.can_retry(&status),
+            retry_needs_torrent: job.retry_needs_torrent(&status),
+            torrent_phase: job.phase(),
+            thumbnail: job.thumbnail.clone(),
+            error_code,
             status,
             kind: job.kind,
             engine: job.engine.clone(),
             title,
+            folder: job.folder.clone(),
+            filename,
             error,
         },
     );
@@ -589,21 +768,25 @@ pub async fn start_video(
         url: spec.url.clone(),
         title: Mutex::new(title.clone()),
         thumbnail: job_thumbnail,
+        torrent_phase: StdMutex::new(None),
+        torrent: Mutex::new(TorrentData::default()),
+        control: Mutex::new(()),
         folder,
-        status: Mutex::new((JobStatus::Queued, None)),
+        status: Mutex::new((JobStatus::Queued, None, None)),
         progress: Mutex::new(Progress::default()),
         spec: Some(spec),
         gid: Mutex::new(None),
+        daemon: Mutex::new(std::sync::Weak::new()),
         kill: Arc::new(Notify::new()),
         pause_requested: AtomicBool::new(false),
+        pause_sequence: std::sync::atomic::AtomicU64::new(0),
         cancel_requested: AtomicBool::new(false),
         torrent_selected: AtomicBool::new(false),
         runner_active: AtomicBool::new(false),
         created_at: now_ms(),
     });
 
-    queue.jobs.lock().await.insert(id.clone(), job.clone());
-    queue.order.lock().await.push(id.clone());
+    register_job(&queue, job.clone()).await;
 
     // Persist for restore-after-restart (removed on terminal states) and
     // create the history record at ADD time (patched on transitions).
@@ -649,17 +832,15 @@ pub async fn start_video(
         let _ = tokio::task::spawn_blocking(move || db2.upsert_history(&hist)).await;
     }
 
-    emit_state(&app, &job, JobStatus::Queued, Some(title.clone()), None);
+    emit_state(&app, &job, JobStatus::Queued, Some(title.clone()), None).await;
     let _ = job
         .runner_active
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst);
 
-    let rank = rank_of(&queue, &job.id).await;
-
     tokio::spawn(async move {
         let queue: State<'_, QueueManager> = app.state();
 
-        run_video_job(app.clone(), &queue, job, binary, args, rank).await;
+        run_video_job(app.clone(), &queue, job, binary, args).await;
     });
 
     Ok(id)
@@ -680,12 +861,7 @@ pub async fn pause_job(
         .cloned()
         .ok_or("no such job")?;
     if job.engine == "aria2" {
-        job.pause_requested.store(true, Ordering::SeqCst);
-        let gid = job.gid.lock().await.clone().ok_or("job has no gid yet")?;
-        let daemon = ensure_aria2(&app).await?;
-        daemon.pause(&gid).await.map_err(|e| e.to_string())?;
-        set_status(&app, &job, JobStatus::Paused, None).await;
-        return Ok(());
+        return pause_aria2_job(&app, &job).await;
     }
     job.pause_requested.store(true, Ordering::SeqCst);
     job.kill.notify_one();
@@ -706,26 +882,23 @@ pub async fn resume_job(
         .ok_or("no such job")?;
 
     if job.engine == "aria2" {
-        let gid = job.gid.lock().await.clone().ok_or("job has no gid yet")?;
-        let daemon = ensure_aria2(&app).await?;
-        daemon.unpause(&gid).await.map_err(|e| e.to_string())?;
-        return Ok(());
+        return resume_aria2_job(&app, &job).await;
     }
 
     let spec = job.spec.clone().ok_or("job cannot be resumed")?;
     let binary =
         engines::find_engine(&app, "yt-dlp").ok_or_else(|| "yt-dlp not found".to_string())?;
     let ffmpeg = engines::find_engine(&app, "ffmpeg");
-    let args = ytdlp::download_args(&spec, ffmpeg.as_ref()).map_err(|e| e.to_string())?;
-    if !claim_runner(&job) {
-        return Err("job is already running".into());
+    let args = safe_video_resume_args(&spec, ffmpeg.as_ref()).map_err(|e| e.to_string())?;
+    if job.status.lock().await.0 != JobStatus::Paused || !claim_runner(&job) {
+        return Err("job is not paused".into());
     }
+    job.pause_requested.store(false, Ordering::SeqCst);
 
     set_status(&app, &job, JobStatus::Queued, None).await;
-    let rank = rank_of(&queue, &job.id).await;
     tokio::spawn(async move {
         let queue: State<'_, QueueManager> = app.state();
-        run_video_job(app.clone(), &queue, job, binary, args, rank).await;
+        run_video_job(app.clone(), &queue, job, binary, args).await;
     });
     Ok(())
 }
@@ -751,6 +924,7 @@ pub async fn remove_job(queue: State<'_, QueueManager>, id: String) -> Result<()
         .get(&id)
         .cloned()
         .ok_or("no such job")?;
+    let _control = job.control.lock().await;
     let status = job.status.lock().await.0.clone();
     if !matches!(
         status,
@@ -759,7 +933,9 @@ pub async fn remove_job(queue: State<'_, QueueManager>, id: String) -> Result<()
         return Err("job is still running".into());
     }
     queue.jobs.lock().await.remove(&id);
-    queue.order.lock().await.retain(|x| x != &id);
+    let mut order = queue.order.lock().await;
+    order.retain(|x| x != &id);
+    queue.gate.set_order(&order);
     Ok(())
 }
 
@@ -773,6 +949,99 @@ pub async fn list_jobs(queue: State<'_, QueueManager>) -> Vec<JobView> {
         }
     }
     views
+}
+
+/// Resolve actions from queue state without taking a path from the renderer.
+pub async fn open_completed_download(
+    queue: State<'_, QueueManager>,
+    id: &str,
+    play: bool,
+) -> Result<(), String> {
+    let job = queue
+        .jobs
+        .lock()
+        .await
+        .get(id)
+        .cloned()
+        .ok_or("Download not found")?;
+    if job.status.lock().await.0 != JobStatus::Completed {
+        return Err("Download is not complete".into());
+    }
+    if play && job.kind != JobKind::Video {
+        return Err("Only a completed video can be played".into());
+    }
+    let folder = job.folder.clone().ok_or("Download folder unavailable")?;
+    let filename = job.progress.lock().await.filename.clone();
+    tokio::task::spawn_blocking(move || {
+        let folder = Path::new(&folder)
+            .canonicalize()
+            .map_err(|_| "Download folder unavailable")?;
+        if !folder.is_dir() {
+            return Err("Download folder unavailable".into());
+        }
+        let file = filename
+            .as_deref()
+            .and_then(|name| completed_file_in(&folder, Path::new(name)));
+        if play {
+            let file = file
+                .filter(|file| is_playable_media(file))
+                .ok_or("Video file unavailable")?;
+            return tauri_plugin_opener::open_path(file, None::<&str>)
+                .map_err(|err| err.to_string());
+        }
+        if let Some(file) = file {
+            if tauri_plugin_opener::reveal_item_in_dir(&file).is_ok() {
+                return Ok(());
+            }
+            if let Some(parent) = file.parent() {
+                return tauri_plugin_opener::open_path(parent, None::<&str>)
+                    .map_err(|err| err.to_string());
+            }
+        }
+        tauri_plugin_opener::open_path(folder, None::<&str>).map_err(|err| err.to_string())
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+fn completed_file_in(folder: &Path, filename: &Path) -> Option<PathBuf> {
+    let path = if filename.is_absolute() {
+        filename.to_path_buf()
+    } else {
+        folder.join(filename)
+    };
+    let path = path.canonicalize().ok()?;
+    (path.starts_with(folder) && path.is_file()).then_some(path)
+}
+
+fn is_playable_media(file: &Path) -> bool {
+    file.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| {
+            matches!(
+                ext.to_ascii_lowercase().as_str(),
+                "mp4"
+                    | "mkv"
+                    | "webm"
+                    | "mov"
+                    | "avi"
+                    | "flv"
+                    | "mpeg"
+                    | "mpg"
+                    | "m4v"
+                    | "ts"
+                    | "3gp"
+                    | "ogv"
+                    | "wmv"
+                    | "mp3"
+                    | "m4a"
+                    | "opus"
+                    | "ogg"
+                    | "aac"
+                    | "wav"
+                    | "flac"
+            )
+        })
 }
 
 async fn requested_kill(job: &Job) -> Option<bool /* pause */> {
@@ -825,10 +1094,9 @@ async fn run_video_job(
     job: Arc<Job>,
     binary: PathBuf,
     args: Vec<String>,
-    rank: usize,
 ) {
     let _runner_guard = RunnerGuard(&job.runner_active);
-    let Some(_guard) = GateGuard::acquire_rank(queue.gate.clone(), rank, &job).await else {
+    let Some(_guard) = GateGuard::acquire(queue.gate.clone(), &job).await else {
         if job.cancel_requested.swap(false, Ordering::SeqCst) {
             set_status(&app, &job, JobStatus::Canceled, None).await;
         } else {
@@ -888,72 +1156,49 @@ async fn run_video_job(
     let stdout = child.stdout.take().expect("stdout piped");
     let stderr = child.stderr.take().expect("stderr piped");
 
-    // Drain stderr in the background: surface the last line as live
-    // activity in the UI (throttled) and keep a tail for error reports.
-    // ffmpeg progress lines ("time=…") are parsed into progress events so
-    // m3u8 downloads get a real bar.
-    let stderr_tail: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let stderr_tail_reader = stderr_tail.clone();
-    let activity_job = job.id.clone();
-    let activity_app = app.clone();
-    let progress_job = job.clone();
+    let stderr_job = job.clone();
+    let stderr_app = app.clone();
     let duration = job
         .spec
         .as_ref()
-        .and_then(|s| s.duration)
-        .filter(|d| *d > 0.0);
-    tokio::spawn(async move {
-        let mut lines = BufReader::new(stderr).lines();
-        let mut last_emit = Instant::now() - EMIT_INTERVAL;
-        let mut last_line = String::new();
-        while let Ok(Some(line)) = lines.next_line().await {
-            if let Some(t) = ytdlp::ffmpeg_time_seconds(&line) {
-                if let Some(d) = duration {
-                    let t = t.min(d);
-                    {
-                        let mut progress = progress_job.progress.lock().await;
-                        progress.downloaded = t;
-                        progress.total = Some(d);
-                        progress.eta = d - t;
-                    }
-                    let _ = activity_app.emit(
-                        EVENT_PROGRESS,
-                        ProgressEvent {
-                            id: activity_job.clone(),
-                            downloaded_bytes: t,
-                            total_bytes: Some(d),
-                            speed: 0.0,
-                            eta: d - t,
-                        },
-                    );
+        .and_then(|spec| spec.duration)
+        .filter(|duration| duration.is_finite() && *duration > 0.0);
+    let mut stderr_reader = tokio::spawn(async move {
+        let mut reader = BufReader::new(stderr);
+        let mut ffmpeg = FfmpegProgress::default();
+        let mut tail = std::collections::VecDeque::new();
+        let mut last_activity = Instant::now() - EMIT_INTERVAL;
+        while let Ok(Some(record)) = read_engine_record(&mut reader).await {
+            let record = record.trim();
+            if let Some(progress) = ytdlp::parse_download_progress(record) {
+                on_progress(&stderr_app, &stderr_job, progress).await;
+                continue;
+            }
+            {
+                let mut progress = stderr_job.progress.lock().await;
+                if ffmpeg.update(&mut progress, record, duration, Instant::now()) {
+                    emit_progress(&stderr_app, &stderr_job, &mut progress, false);
                     continue;
                 }
             }
-            let is_noise = line.starts_with('{') || line.trim().is_empty();
-            if !is_noise && last_emit.elapsed() >= EMIT_INTERVAL {
-                last_emit = Instant::now();
-                last_line = line.clone();
-                let _ = activity_app.emit(
-                    EVENT_ACTIVITY,
-                    serde_json::json!({ "id": activity_job, "text": line }),
-                );
-            } else if !is_noise {
-                last_line = line.clone();
-            }
-            let mut tail = stderr_tail_reader.lock().await;
-            tail.push(line);
-            if tail.len() > 12 {
-                tail.remove(0);
+            if !record.is_empty() {
+                if last_activity.elapsed() >= EMIT_INTERVAL {
+                    last_activity = Instant::now();
+                    emit_activity(&stderr_app, &stderr_job.id, record);
+                }
+                if tail.len() == 12 {
+                    tail.pop_front();
+                }
+                tail.push_back(record.chars().take(400).collect::<String>());
             }
         }
-        // Surface a final activity line so the UI never looks frozen.
-        if !last_line.is_empty() {
-            let _ = activity_app.emit(
-                EVENT_ACTIVITY,
-                serde_json::json!({ "id": activity_job, "text": last_line }),
-            );
-        }
+        tail.into_iter().collect::<Vec<_>>().join(
+            "
+",
+        )
     });
+    let mut output_path = None;
+    let mut last_stdout_activity = Instant::now() - EMIT_INTERVAL;
 
     let mut stdout_lines = BufReader::new(stdout).lines();
     let kill = job.kill.clone();
@@ -965,14 +1210,14 @@ async fn run_video_job(
             line = stdout_lines.next_line() => {
                 match line {
                     Ok(Some(l)) => {
-                        if l.starts_with('{') {
-                            if let Ok(p) = serde_json::from_str::<YtdlpProgress>(&l) {
-                                on_progress(&app, &job, p).await;
-                            }
-                        } else if !l.trim().is_empty() {
-                            // Non-JSON lines (fragment notes, destinations)
-                            // keep the UI alive for HLS-only downloads.
-                            emit_activity(&app, &job.id, &l);
+                        let record = l.trim();
+                        if let Some(path) = record.strip_prefix(ytdlp::OUTPUT_PREFIX) {
+                            output_path = serde_json::from_str::<String>(path).ok();
+                        } else if let Some(progress) = ytdlp::parse_download_progress(record) {
+                            on_progress(&app, &job, progress).await;
+                        } else if !record.is_empty() && last_stdout_activity.elapsed() >= EMIT_INTERVAL {
+                            last_stdout_activity = Instant::now();
+                            emit_activity(&app, &job.id, record);
                         }
                     }
                     Ok(None) | Err(_) => break,
@@ -1006,28 +1251,45 @@ async fn run_video_job(
         }
     };
 
+    let stderr_tail = match tokio::time::timeout(Duration::from_secs(1), &mut stderr_reader).await {
+        Ok(result) => result.unwrap_or_default(),
+        Err(_) => {
+            stderr_reader.abort();
+            let _ = stderr_reader.await;
+            String::new()
+        }
+    };
     match (killed, exit.map(|c| c.success())) {
         (None, Some(true)) => {
+            let final_file = match output_path {
+                Some(path) => tokio::fs::metadata(&path)
+                    .await
+                    .ok()
+                    .filter(|metadata| metadata.is_file())
+                    .map(|metadata| (path, metadata.len())),
+                None => None,
+            };
+            let total_bytes = {
+                let mut progress = job.progress.lock().await;
+                if let Some((path, bytes)) = final_file {
+                    progress.filename = Some(path);
+                    progress.downloaded = bytes as f64;
+                    progress.total = Some(bytes as f64);
+                } else {
+                    progress.filename = None;
+                    if progress.downloaded > 0.0 {
+                        progress.total = Some(progress.downloaded);
+                    }
+                }
+                progress.fraction = Some(1.0);
+                progress.speed = 0.0;
+                progress.eta = 0.0;
+                emit_progress(&app, &job, &mut progress, true);
+                progress.downloaded as i64
+            };
             set_status(&app, &job, JobStatus::Completed, None).await;
-            let progress = job.progress.lock().await.clone();
-            let _ = app.emit(
-                EVENT_PROGRESS,
-                ProgressEvent {
-                    id: job.id.clone(),
-                    downloaded_bytes: progress.total.unwrap_or(progress.downloaded),
-                    total_bytes: progress.total,
-                    speed: 0.0,
-                    eta: 0.0,
-                },
-            );
             delete_pending(&app, &job.id).await;
-            record_history(
-                &app,
-                &job,
-                JobStatus::Completed,
-                progress.total.unwrap_or(progress.downloaded) as i64,
-            )
-            .await;
+            record_history(&app, &job, JobStatus::Completed, total_bytes).await;
         }
         (Some(true), _) => {
             set_status(&app, &job, JobStatus::Paused, None).await;
@@ -1037,11 +1299,10 @@ async fn run_video_job(
             delete_pending(&app, &job.id).await;
         }
         (None, Some(false)) => {
-            let tail = stderr_tail.lock().await.clone();
-            let err = if tail.is_empty() {
+            let err = if stderr_tail.is_empty() {
                 "yt-dlp exited with an error".to_string()
             } else {
-                tail.join("\n").chars().take(1500).collect()
+                stderr_tail.chars().take(1500).collect()
             };
             set_status(&app, &job, JobStatus::Failed, Some(err)).await;
             record_history(&app, &job, JobStatus::Failed, 0).await;
@@ -1064,11 +1325,9 @@ async fn run_video_job(
     }
 }
 
-/// Applies a new display order (drag-and-drop in the queue). Unknown ids
-/// are appended so nothing is lost; aria2 waiting/paused tasks are moved to
-/// matching positions via changePosition.
+/// Applies the display order to jobs already waiting for a transfer slot.
 pub async fn set_job_order(
-    app: AppHandle,
+    _app: AppHandle,
     queue: State<'_, QueueManager>,
     ids: Vec<String>,
 ) -> Result<(), String> {
@@ -1088,30 +1347,7 @@ pub async fn set_job_order(
         }
     }
     *order = next;
-    drop(order);
-    drop(jobs);
-
-    // Push matching positions into aria2 for waiting tasks.
-    let daemon = match ensure_aria2(&app).await {
-        Ok(d) => d,
-        Err(e) => {
-            log::warn!("reorder: aria2 unavailable: {e}");
-            return Ok(());
-        }
-    };
-    let jobs = queue.jobs.lock().await;
-    let order = queue.order.lock().await;
-    let mut pos = 1usize;
-    for id in order.iter() {
-        if let Some(job) = jobs.get(id) {
-            if job.engine == "aria2" {
-                if let Some(gid) = job.gid.lock().await.clone() {
-                    let _ = daemon.change_position(&gid, pos).await;
-                }
-            }
-            pos += 1;
-        }
-    }
+    queue.gate.set_order(&order);
     Ok(())
 }
 
@@ -1158,20 +1394,25 @@ pub async fn restore_pending_jobs(app: AppHandle) -> usize {
             url: row.url.clone(),
             title: Mutex::new(row.title.clone()),
             thumbnail: None,
+            torrent_phase: StdMutex::new(None),
+            torrent: Mutex::new(TorrentData::default()),
+            control: Mutex::new(()),
             folder: row.folder.clone(),
-            status: Mutex::new((JobStatus::Paused, None)),
+            status: Mutex::new((JobStatus::Paused, None, None)),
             progress: Mutex::new(Progress::default()),
             spec: Some(spec),
             gid: Mutex::new(None),
+            daemon: Mutex::new(std::sync::Weak::new()),
             kill: Arc::new(Notify::new()),
             pause_requested: AtomicBool::new(false),
+            pause_sequence: std::sync::atomic::AtomicU64::new(0),
             cancel_requested: AtomicBool::new(false),
             torrent_selected: AtomicBool::new(false),
             runner_active: AtomicBool::new(false),
             created_at: row.created_at,
         });
         register_job(&queue, job.clone()).await;
-        emit_state(&app, &job, JobStatus::Paused, Some(row.title.clone()), None);
+        emit_state(&app, &job, JobStatus::Paused, Some(row.title.clone()), None).await;
         restored += 1;
     }
     if restored > 0 {
@@ -1243,6 +1484,15 @@ pub struct TorrentFileInfo {
     pub selected: bool,
 }
 
+#[derive(Default)]
+struct TorrentData {
+    hash: Option<String>,
+    files: Vec<TorrentFileInfo>,
+    selection: Vec<u64>,
+    retry_selection: Vec<u64>,
+    check_retry_paths: bool,
+}
+
 /// Returns the shared aria2 daemon, spawning it on first use.
 /// The state lock is held across the spawn so concurrent callers (two
 /// quick adds, tray actions) cannot race into two daemons — the loser of
@@ -1251,7 +1501,10 @@ async fn ensure_aria2(app: &AppHandle) -> Result<Arc<Aria2Daemon>, String> {
     let state: State<'_, crate::AppState> = app.state();
     let mut guard = state.aria2.lock().await;
     if let Some(daemon) = guard.as_ref() {
-        return Ok(daemon.clone());
+        if daemon.is_running().await.map_err(|e| e.to_string())? {
+            return Ok(daemon.clone());
+        }
+        log::warn!("aria2 exited; starting a new daemon for the next request");
     }
     let binary = engines::find_engine(app, "aria2").ok_or("aria2 not found")?;
     let dir = app.path().download_dir().map_err(|e| e.to_string())?;
@@ -1276,7 +1529,9 @@ fn default_title_for_url(url: &str) -> String {
 async fn register_job(queue: &QueueManager, job: Arc<Job>) {
     let id = job.id.clone();
     queue.jobs.lock().await.insert(id.clone(), job);
-    queue.order.lock().await.push(id);
+    let mut order = queue.order.lock().await;
+    order.push(id);
+    queue.gate.set_order(&order);
 }
 
 fn base_job(url: String, title: String, folder: Option<String>) -> Job {
@@ -1287,13 +1542,18 @@ fn base_job(url: String, title: String, folder: Option<String>) -> Job {
         url,
         title: Mutex::new(title),
         thumbnail: None,
+        torrent_phase: StdMutex::new(None),
+        torrent: Mutex::new(TorrentData::default()),
+        control: Mutex::new(()),
         folder,
-        status: Mutex::new((JobStatus::Queued, None)),
+        status: Mutex::new((JobStatus::Queued, None, None)),
         progress: Mutex::new(Progress::default()),
         spec: None,
         gid: Mutex::new(None),
+        daemon: Mutex::new(std::sync::Weak::new()),
         kill: Arc::new(Notify::new()),
         pause_requested: AtomicBool::new(false),
+        pause_sequence: std::sync::atomic::AtomicU64::new(0),
         cancel_requested: AtomicBool::new(false),
         torrent_selected: AtomicBool::new(false),
         runner_active: AtomicBool::new(false),
@@ -1310,6 +1570,7 @@ pub async fn start_file(
     folder: Option<String>,
 ) -> Result<String, String> {
     super::ytdlp::validate_url(&url).map_err(|e| e.to_string())?;
+    let _add = queue.aria_add.lock().await;
     let daemon = ensure_aria2(&app).await?;
     let mut options = json!({});
     if let Some(dir) = folder.as_ref().filter(|d| !d.trim().is_empty()) {
@@ -1326,12 +1587,18 @@ pub async fn start_file(
     let mut job = Arc::new(base_job(
         url.clone(),
         title.unwrap_or_else(|| default_title_for_url(&url)),
-        Some(folder.unwrap_or_else(|| daemon.download_dir.to_string_lossy().to_string())),
+        Some(
+            folder
+                .filter(|dir| !dir.trim().is_empty())
+                .unwrap_or_else(|| daemon.download_dir.to_string_lossy().to_string()),
+        ),
     ));
     if let Some(j) = Arc::get_mut(&mut job) {
         j.kind = JobKind::File;
     }
 
+    *job.daemon.lock().await = Arc::downgrade(&daemon);
+    *job.gid.lock().await = Some(gid.clone());
     register_job(&queue, job.clone()).await;
     record_history_created(&app, &job).await;
     emit_state(
@@ -1340,14 +1607,10 @@ pub async fn start_file(
         JobStatus::Queued,
         Some(job.title.lock().await.clone()),
         None,
-    );
+    )
+    .await;
 
-    let job_task = job.clone();
-    let rank = rank_of(&queue, &job.id).await;
-    tokio::spawn(async move {
-        let queue: State<'_, QueueManager> = app.state();
-        run_aria2_job(app.clone(), &queue, job_task, daemon, gid, rank).await;
-    });
+    spawn_aria2_runner(&app, job.clone(), daemon, gid).await;
     Ok(job.id.clone())
 }
 
@@ -1362,93 +1625,17 @@ pub async fn start_torrent(
     if let TorrentSource::Magnet(magnet) = &source {
         super::ytdlp::validate_magnet(magnet).map_err(|e| e.to_string())?;
     }
-    let daemon = ensure_aria2(&app).await?;
-
     // Duplicate detection: a torrent with the same info-hash may already
     // live in the daemon (paused awaiting file selection, active, or a
     // dead stop that would make addTorrent fail with "already registered").
     let incoming_hash = match &source {
         TorrentSource::Magnet(magnet) => super::torrent::magnet_info_hash(magnet),
-        TorrentSource::TorrentBase64(b64) => {
-            use base64::Engine as _;
-            let raw = base64::engine::general_purpose::STANDARD
-                .decode(b64)
-                .map_err(|e| format!("bad torrent payload: {e}"))?;
-            if raw.len() > 10 * 1024 * 1024 {
-                return Err("torrent payload exceeds 10 MiB".into());
-            }
-            super::torrent::info_hash(&raw).map(|h| hex_encode(&h[..]))
-        }
+        TorrentSource::TorrentBase64(b64) => Some(torrent_payload_hash(b64)?),
     };
-
-    if let Some(hash) = incoming_hash {
-        match daemon.all_statuses().await {
-            Ok(list) => {
-                let mut dead_dupe: Option<String> = None;
-                for st in &list {
-                    let same = st
-                        .info_hash
-                        .as_deref()
-                        .map(|h| h.eq_ignore_ascii_case(&hash))
-                        .unwrap_or(false);
-                    if !same {
-                        continue;
-                    }
-                    match st.status.as_str() {
-                        "active" => {
-                            return Err("torrentActive".into());
-                        }
-                        "complete" => {
-                            return Err("torrentComplete".into());
-                        }
-                        "error" | "removed" => {
-                            dead_dupe = Some(st.gid.clone());
-                        }
-                        _ => {
-                            // waiting / paused — reuse it: register a job on
-                            // the same gid and let the poller take over.
-                            let mut job = Arc::new(base_job(
-                                format!("torrent:{hash}"),
-                                st.torrent_name().unwrap_or_else(|| "Torrent".into()),
-                                Some(daemon.download_dir.to_string_lossy().to_string()),
-                            ));
-                            if let Some(j) = Arc::get_mut(&mut job) {
-                                j.kind = JobKind::Torrent;
-                            }
-                            emit_state(
-                                &app,
-                                &job,
-                                JobStatus::Queued,
-                                Some(job.title.lock().await.clone()),
-                                None,
-                            );
-                            register_job(&queue, job.clone()).await;
-                            let job_task = job.clone();
-                            let daemon2 = daemon.clone();
-                            let existing_gid = st.gid.clone();
-                            let rank = rank_of(&queue, &job.id).await;
-                            tokio::spawn(async move {
-                                let queue: State<'_, QueueManager> = app.state();
-                                run_aria2_job(
-                                    app.clone(),
-                                    &queue,
-                                    job_task,
-                                    daemon2,
-                                    existing_gid,
-                                    rank,
-                                )
-                                .await;
-                            });
-                            return Ok(job.id.clone());
-                        }
-                    }
-                }
-                if let Some(old_gid) = dead_dupe {
-                    let _ = daemon.force_remove(&old_gid).await;
-                }
-            }
-            Err(e) => log::warn!("duplicate scan failed: {e}"),
-        }
+    let _add = queue.aria_add.lock().await;
+    let daemon = ensure_aria2(&app).await?;
+    if let Some(hash) = &incoming_hash {
+        check_torrent_duplicates(&daemon, hash).await?;
     }
 
     let mut options = json!({});
@@ -1459,7 +1646,14 @@ pub async fn start_torrent(
     let (gid, url) = match &source {
         TorrentSource::Magnet(magnet) => (
             daemon
-                .add_uri(std::slice::from_ref(magnet), options, true)
+                .add_uri(
+                    std::slice::from_ref(magnet),
+                    {
+                        options["pause-metadata"] = json!("true");
+                        options
+                    },
+                    false,
+                )
                 .await
                 .map_err(|e| e.to_string())?,
             magnet.clone(),
@@ -1482,12 +1676,22 @@ pub async fn start_torrent(
             TorrentSource::Magnet(_) => "Magnet link".into(),
             TorrentSource::TorrentBase64(_) => "Torrent".into(),
         },
-        Some(folder.unwrap_or_else(|| daemon.download_dir.to_string_lossy().to_string())),
+        Some(
+            folder
+                .filter(|dir| !dir.trim().is_empty())
+                .unwrap_or_else(|| daemon.download_dir.to_string_lossy().to_string()),
+        ),
     ));
     if let Some(j) = Arc::get_mut(&mut job) {
         j.kind = JobKind::Torrent;
     }
 
+    if matches!(source, TorrentSource::Magnet(_)) {
+        job.set_phase(Some(TorrentPhase::Metadata));
+    }
+    job.torrent.lock().await.hash = incoming_hash;
+    *job.daemon.lock().await = Arc::downgrade(&daemon);
+    *job.gid.lock().await = Some(gid.clone());
     register_job(&queue, job.clone()).await;
     record_history_created(&app, &job).await;
     emit_state(
@@ -1496,73 +1700,420 @@ pub async fn start_torrent(
         JobStatus::Queued,
         Some(job.title.lock().await.clone()),
         None,
-    );
+    )
+    .await;
 
-    let job_task = job.clone();
-    let rank = rank_of(&queue, &job.id).await;
-    tokio::spawn(async move {
-        let queue: State<'_, QueueManager> = app.state();
-        run_aria2_job(app.clone(), &queue, job_task, daemon, gid, rank).await;
-    });
+    spawn_aria2_runner(&app, job.clone(), daemon, gid).await;
     Ok(job.id.clone())
 }
 
-/// Polls aria2 for one job until it reaches a terminal state.
-async fn run_aria2_job(
-    app: AppHandle,
-    queue: &QueueManager,
-    job: Arc<Job>,
-    daemon: Arc<Aria2Daemon>,
-    gid: String,
-    rank: usize,
-) {
-    *job.gid.lock().await = Some(gid.clone());
-    let _gate_guard = if job.kind == JobKind::File {
-        let gate_guard = GateGuard::acquire_rank(queue.gate.clone(), rank, &job).await;
-        if gate_guard.is_none() {
-            if job.cancel_requested.swap(false, Ordering::SeqCst) {
-                let _ = daemon.force_remove(&gid).await;
-                set_status(&app, &job, JobStatus::Canceled, None).await;
-            } else {
-                set_status(&app, &job, JobStatus::Paused, None).await;
-            }
-            return;
+#[derive(Debug, thiserror::Error)]
+pub enum RetryError {
+    #[error("{0}")]
+    Unavailable(String),
+    #[error("Select the original .torrent file to retry this download")]
+    NeedsTorrent,
+    #[error("The selected .torrent does not match the original download")]
+    TorrentMismatch,
+    #[error("{0}")]
+    Failed(String),
+}
+
+impl RetryError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Unavailable(_) => "retryUnavailable",
+            Self::NeedsTorrent => "retryNeedsTorrent",
+            Self::TorrentMismatch => "retryTorrentMismatch",
+            Self::Failed(_) => "retryFailed",
         }
-        gate_guard
+    }
+}
+
+fn validate_retry_torrent<'a>(
+    payload: Option<&'a str>,
+    expected: Option<&str>,
+) -> Result<&'a str, RetryError> {
+    let payload = payload.ok_or(RetryError::NeedsTorrent)?;
+    let hash = torrent_payload_hash(payload).map_err(RetryError::Failed)?;
+    if !expected.is_some_and(|expected| expected.eq_ignore_ascii_case(&hash)) {
+        return Err(RetryError::TorrentMismatch);
+    }
+    Ok(payload)
+}
+
+fn retry_aria2_options(folder: Option<&str>, gid: &str) -> serde_json::Value {
+    let mut options = json!({
+        "gid": gid,
+        "allow-overwrite": "false",
+        "auto-file-renaming": "false",
+        "continue": "false"
+    });
+    if let Some(folder) = folder {
+        options["dir"] = json!(folder);
+    }
+    options
+}
+
+fn safe_video_resume_args(
+    spec: &VideoDownloadSpec,
+    ffmpeg: Option<&PathBuf>,
+) -> Result<Vec<String>, ytdlp::YtdlpError> {
+    let mut args = ytdlp::download_args(spec, ffmpeg)?;
+    args.insert(0, "--no-overwrites".into());
+    Ok(args)
+}
+
+pub async fn retry_job(
+    app: AppHandle,
+    queue: State<'_, QueueManager>,
+    id: String,
+    torrent_base64: Option<String>,
+) -> Result<String, RetryError> {
+    let unavailable = |message: &str| RetryError::Unavailable(message.into());
+    let job = queue
+        .jobs
+        .lock()
+        .await
+        .get(&id)
+        .cloned()
+        .ok_or_else(|| unavailable("Download not found"))?;
+    let _control = job.control.lock().await;
+    if !queue.jobs.lock().await.contains_key(&id)
+        || !job.can_retry(&job.status.lock().await.0)
+        || job.runner_active.load(Ordering::SeqCst)
+        || queue.is_shutting_down().await
+    {
+        return Err(unavailable(
+            "This download cannot be retried in its current state",
+        ));
+    }
+    if let Some(spec) = &job.spec {
+        let binary =
+            engines::find_engine(&app, "yt-dlp").ok_or_else(|| unavailable("yt-dlp not found"))?;
+        let ffmpeg = engines::find_engine(&app, "ffmpeg");
+        let args = safe_video_resume_args(spec, ffmpeg.as_ref())
+            .map_err(|e| RetryError::Failed(e.to_string()))?;
+        let spec_json =
+            serde_json::to_string(spec).map_err(|e| RetryError::Failed(e.to_string()))?;
+        if !claim_runner(&job) {
+            return Err(unavailable("Download is already running"));
+        }
+        let pending = crate::core::db::PendingJob {
+            id: id.clone(),
+            kind: "video".into(),
+            url: job.url.clone(),
+            title: job.title.lock().await.clone(),
+            folder: job.folder.clone(),
+            spec_json,
+            created_at: job.created_at,
+        };
+        let db = app.state::<crate::AppState>().db.clone();
+        let _ = tokio::task::spawn_blocking(move || db.save_pending(&pending)).await;
+        reset_for_retry(&app, &job).await;
+        let app = app.clone();
+        let job = job.clone();
+        tokio::spawn(async move {
+            let queue = app.state::<QueueManager>();
+            run_video_job(app.clone(), &queue, job, binary, args).await;
+        });
+        return Ok(id);
+    }
+
+    let hash = job.torrent.lock().await.hash.clone();
+    let local_payload = if job.retry_needs_torrent(&JobStatus::Failed) {
+        Some(validate_retry_torrent(
+            torrent_base64.as_deref(),
+            hash.as_deref(),
+        )?)
     } else {
         None
     };
-    if job.cancel_requested.swap(false, Ordering::SeqCst) {
-        let _ = daemon.force_remove(&gid).await;
-        set_status(&app, &job, JobStatus::Canceled, None).await;
-        return;
-    }
-    if queue.is_shutting_down().await {
-        let _ = daemon.pause(&gid).await;
-        set_status(&app, &job, JobStatus::Paused, None).await;
-        return;
-    }
-    if job.kind == JobKind::File {
-        if let Err(error) = daemon.unpause(&gid).await {
-            set_status(&app, &job, JobStatus::Failed, Some(error.to_string())).await;
-            return;
+    let _add = queue.aria_add.lock().await;
+    let daemon = ensure_aria2(&app).await.map_err(RetryError::Failed)?;
+    let old = job.daemon.lock().await.upgrade();
+    let old_gid = job.gid.lock().await.clone();
+    let mut existing = None;
+    if old.as_ref().is_some_and(|old| Arc::ptr_eq(old, &daemon)) {
+        if let Some(gid) = old_gid {
+            existing = reconcile_old_aria2_gid(&daemon, gid).await?;
         }
     }
-    let mut metadata_announced = false;
-    let mut last_emit: Option<Instant> = None;
+    let (gid, recreated) = if let Some(gid) = existing {
+        (gid, false)
+    } else {
+        if let Some(hash) = hash.as_deref() {
+            check_torrent_duplicates(&daemon, hash)
+                .await
+                .map_err(RetryError::Unavailable)?;
+        }
+        // Reserve the gid before transmitting the add. If the response is lost,
+        // the next call can reconcile this same task without adding a duplicate.
+        let gid = make_id()[..16].to_owned();
+        *job.gid.lock().await = Some(gid.clone());
+        *job.daemon.lock().await = Arc::downgrade(&daemon);
+        if job.kind == JobKind::Torrent {
+            let mut torrent = job.torrent.lock().await;
+            torrent.check_retry_paths = true;
+            torrent.retry_selection = torrent.selection.clone();
+        }
+        let mut options = retry_aria2_options(job.folder.as_deref(), &gid);
+        options["pause-metadata"] = json!("true");
+        let result = if let Some(payload) = local_payload {
+            daemon.add_torrent(payload, options, true).await
+        } else {
+            daemon
+                .add_uri(std::slice::from_ref(&job.url), options, true)
+                .await
+        };
+        match result {
+            Ok(added) if added == gid => {}
+            Ok(_) => {
+                return Err(RetryError::Failed(
+                    "Unexpected download ID returned by aria2".into(),
+                ))
+            }
+            Err(error) => match daemon.tell_status(&gid).await {
+                Ok(status) if status.status == "paused" => {}
+                _ => return Err(RetryError::Failed(error.to_string())),
+            },
+        }
+        (gid, true)
+    };
+    *job.gid.lock().await = Some(gid.clone());
+    if job.kind == JobKind::Torrent {
+        let mut torrent = job.torrent.lock().await;
+        // Also refresh files if the add was applied but its RPC reply was lost.
+        if recreated || torrent.check_retry_paths {
+            torrent.files.clear();
+            job.torrent_selected.store(false, Ordering::SeqCst);
+        }
+        if !job.torrent_selected.load(Ordering::SeqCst) {
+            if local_payload.is_some() {
+                job.set_phase(None);
+            } else {
+                job.set_phase(Some(TorrentPhase::Metadata));
+            }
+        }
+    }
+    reset_for_retry(&app, &job).await;
+    spawn_aria2_runner(&app, job.clone(), daemon, gid).await;
+    Ok(id)
+}
+
+async fn check_torrent_duplicates(daemon: &Aria2Daemon, hash: &str) -> Result<(), String> {
+    let statuses = daemon
+        .all_statuses()
+        .await
+        .map_err(|error| error.to_string())?;
+    for status in statuses.into_iter().filter(|status| {
+        status.followed_by.is_empty()
+            && status
+                .info_hash
+                .as_deref()
+                .is_some_and(|other| other.eq_ignore_ascii_case(hash))
+    }) {
+        match status.status.as_str() {
+            "complete" => return Err("torrentComplete".into()),
+            "error" | "removed" => daemon
+                .remove_result(&status.gid)
+                .await
+                .map_err(|e| e.to_string())?,
+            _ => return Err("torrentActive".into()),
+        }
+    }
+    Ok(())
+}
+
+async fn reconcile_old_aria2_gid(
+    daemon: &Aria2Daemon,
+    mut gid: String,
+) -> Result<Option<String>, RetryError> {
+    let inspect = |e: Aria2Error| RetryError::Failed(e.to_string());
+    loop {
+        let status = match daemon.tell_status(&gid).await {
+            Ok(status) => status,
+            Err(Aria2Error::MissingGid(_)) => return Ok(None),
+            Err(error) => return Err(inspect(error)),
+        };
+        if let Some(next) = status.followed_by.first().filter(|next| *next != &gid) {
+            gid.clone_from(next);
+            continue;
+        }
+        return match status.status.as_str() {
+            "paused" => Ok(Some(gid)),
+            "waiting" | "active" => {
+                confirm_aria2_pause(daemon, &gid).await.map_err(inspect)?;
+                Ok(Some(gid))
+            }
+            "error" | "removed" => {
+                daemon.remove_result(&gid).await.map_err(inspect)?;
+                Ok(None)
+            }
+            _ => Err(RetryError::Unavailable(
+                "aria2 already finished this download".into(),
+            )),
+        };
+    }
+}
+
+async fn reset_for_retry(app: &AppHandle, job: &Job) {
+    job.pause_requested.store(false, Ordering::SeqCst);
+    job.cancel_requested.store(false, Ordering::SeqCst);
+    {
+        let mut progress = job.progress.lock().await;
+        *progress = Progress::default();
+        emit_progress(app, job, &mut progress, true);
+    }
+    record_history_created(app, job).await;
+    set_status(app, job, JobStatus::Queued, None).await;
+}
+
+fn torrent_payload_hash(payload: &str) -> Result<String, String> {
+    use base64::Engine as _;
+    const MAX_BYTES: usize = 10 * 1024 * 1024;
+    if payload.len() > MAX_BYTES.div_ceil(3) * 4 {
+        return Err("torrent payload exceeds 10 MiB".into());
+    }
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(payload)
+        .map_err(|e| format!("bad torrent payload: {e}"))?;
+    if raw.len() > MAX_BYTES {
+        return Err("torrent payload exceeds 10 MiB".into());
+    }
+    super::torrent::info_hash(&raw)
+        .map(|hash| hex_encode(&hash))
+        .ok_or_else(|| "invalid torrent metadata".into())
+}
+
+async fn spawn_aria2_runner(app: &AppHandle, job: Arc<Job>, daemon: Arc<Aria2Daemon>, gid: String) {
+    *job.daemon.lock().await = Arc::downgrade(&daemon);
+    job.runner_active.store(true, Ordering::SeqCst);
+    let app = app.clone();
+    tokio::spawn(async move { run_aria2_job(app, job, daemon, gid).await });
+}
+
+async fn confirm_aria2_pause(daemon: &Aria2Daemon, gid: &str) -> Result<(), Aria2Error> {
+    let result = daemon.pause(gid).await;
+    // aria2 acknowledges the request before transitioning an active task.
+    let settled = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let status = daemon.tell_status(gid).await?;
+            match status.status.as_str() {
+                "paused" => return Ok(()),
+                "error" | "complete" | "removed" => {
+                    return Err(Aria2Error::Rpc(
+                        "Download stopped before it could be paused".into(),
+                    ));
+                }
+                _ => tokio::time::sleep(Duration::from_millis(100)).await,
+            }
+        }
+    })
+    .await;
+    match settled {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => result.and(Err(error)),
+        Err(_) => result.and(Err(Aria2Error::Rpc(
+            "aria2 did not confirm the pause".into(),
+        ))),
+    }
+}
+
+async fn pause_aria2_job(app: &AppHandle, job: &Job) -> Result<(), String> {
+    let _control = job.control.lock().await;
+    if !matches!(
+        job.status.lock().await.0,
+        JobStatus::Queued | JobStatus::Downloading | JobStatus::Seeding
+    ) {
+        return Err("job is not running".into());
+    }
+    if job.phase() == Some(TorrentPhase::SelectFiles) {
+        return Err("Select torrent files before pausing".into());
+    }
+    let daemon = job
+        .daemon
+        .lock()
+        .await
+        .upgrade()
+        .ok_or("torrent engine unavailable")?;
+    let gid = job.gid.lock().await.clone().ok_or("job has no gid yet")?;
+    let status = daemon.tell_status(&gid).await.map_err(|e| e.to_string())?;
+    let target = status.followed_by.first().unwrap_or(&gid);
+    if target != &gid || status.status != "paused" {
+        confirm_aria2_pause(&daemon, target)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    job.pause_requested.store(true, Ordering::SeqCst);
+    job.pause_sequence.fetch_add(1, Ordering::SeqCst);
+    clear_transfer_stats(app, job).await;
+    set_status(app, job, JobStatus::Paused, None).await;
+    job.kill.notify_one();
+    Ok(())
+}
+
+async fn resume_aria2_job(app: &AppHandle, job: &Job) -> Result<(), String> {
+    let _control = job.control.lock().await;
+    if job.status.lock().await.0 != JobStatus::Paused || !job.runner_active.load(Ordering::SeqCst) {
+        return Err("job is not paused".into());
+    }
+    job.pause_requested.store(false, Ordering::SeqCst);
+    set_status(app, job, JobStatus::Queued, None).await;
+    job.kill.notify_one();
+    Ok(())
+}
+
+async fn clear_transfer_stats(app: &AppHandle, job: &Job) {
+    let mut progress = job.progress.lock().await;
+    progress.speed = 0.0;
+    progress.eta = 0.0;
+    progress.connections = None;
+    progress.seeders = None;
+    progress.upload_speed = None;
+    emit_progress(app, job, &mut progress, true);
+}
+
+/// The poller owns the slot and only unpauses data transfers after acquiring one.
+async fn run_aria2_job(app: AppHandle, job: Arc<Job>, daemon: Arc<Aria2Daemon>, mut gid: String) {
+    let _runner = RunnerGuard(&job.runner_active);
+    let queue = app.state::<QueueManager>();
     let mut consecutive_errors = 0u32;
-    let mut gate_guard: Option<GateGuard> = None;
+    let mut gate_guard = None;
+    let mut saw_pause = job.pause_sequence.load(Ordering::SeqCst);
+    let mut poll = tokio::time::interval(Duration::from_millis(500));
+    poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     loop {
-        tokio::time::sleep(Duration::from_millis(800)).await;
-
-        // Local cancel signal (from the UI).
+        tokio::select! {
+            _ = poll.tick() => {},
+            _ = job.kill.notified() => {},
+        }
+        let control = job.control.lock().await;
+        let pause_sequence = job.pause_sequence.load(Ordering::SeqCst);
+        if saw_pause != pause_sequence {
+            drop(gate_guard.take());
+            saw_pause = pause_sequence;
+        }
         if job.cancel_requested.swap(false, Ordering::SeqCst) {
-            let _ = daemon.force_remove(&gid).await;
+            let target = daemon
+                .tell_status(&gid)
+                .await
+                .ok()
+                .and_then(|status| status.followed_by.into_iter().next())
+                .unwrap_or_else(|| gid.clone());
+            let _ = daemon.force_remove(&target).await;
+            drop(gate_guard.take());
+            clear_transfer_stats(&app, &job).await;
             set_status(&app, &job, JobStatus::Canceled, None).await;
             break;
         }
-
+        if job.pause_requested.load(Ordering::SeqCst) {
+            drop(gate_guard.take());
+            if !matches!(daemon.is_running().await, Ok(false)) {
+                continue;
+            }
+        }
         let status = match daemon.tell_status(&gid).await {
             Ok(s) => {
                 consecutive_errors = 0;
@@ -1570,159 +2121,159 @@ async fn run_aria2_job(
             }
             Err(e) => {
                 consecutive_errors += 1;
-                if consecutive_errors > 10 {
-                    set_status(&app, &job, JobStatus::Failed, Some(e.to_string())).await;
+                let engine_exited = matches!(daemon.is_running().await, Ok(false));
+                if engine_exited
+                    || matches!(e, Aria2Error::MissingGid(_))
+                    || consecutive_errors > 10
+                {
+                    let error = if engine_exited {
+                        "The torrent engine stopped.".into()
+                    } else {
+                        e.to_string()
+                    };
+                    drop(gate_guard.take());
+                    clear_transfer_stats(&app, &job).await;
+                    set_status(&app, &job, JobStatus::Failed, Some(error)).await;
+                    record_history(&app, &job, JobStatus::Failed, 0).await;
                     break;
                 }
                 continue;
             }
         };
+        if let Some(next_gid) = status.followed_by.first() {
+            gid.clone_from(next_gid);
+            *job.gid.lock().await = Some(gid.clone());
+            job.kill.notify_one();
+            continue;
+        }
 
         if job.kind == JobKind::Torrent
-            && job.torrent_selected.load(Ordering::SeqCst)
-            && gate_guard.is_none()
+            && !status.is_metadata_only()
+            && matches!(status.status.as_str(), "paused" | "waiting" | "active")
+            && job.torrent.lock().await.check_retry_paths
         {
-            gate_guard = GateGuard::acquire_rank(queue.gate.clone(), rank, &job).await;
-            if gate_guard.is_none() {
-                if job.cancel_requested.swap(false, Ordering::SeqCst) {
-                    let _ = daemon.force_remove(&gid).await;
-                    set_status(&app, &job, JobStatus::Canceled, None).await;
-                }
-                continue;
-            }
-            if let Err(error) = daemon.unpause(&gid).await {
-                set_status(&app, &job, JobStatus::Failed, Some(error.to_string())).await;
+            if let Err(error) = check_retry_torrent_paths(&status).await {
+                let _ = daemon.force_remove(&gid).await;
+                drop(gate_guard.take());
+                clear_transfer_stats(&app, &job).await;
+                set_status(&app, &job, JobStatus::Failed, Some(error)).await;
+                record_history(&app, &job, JobStatus::Failed, 0).await;
                 break;
             }
         }
-
-        // Torrent metadata resolved → offer the file list to the UI once.
-        if job.kind == JobKind::Torrent
-            && !metadata_announced
-            && status.status != "error"
-            && !status.is_metadata_only()
-        {
-            metadata_announced = true;
-            let display_name = status.torrent_name().unwrap_or_else(|| "Torrent".into());
-            *job.title.lock().await = display_name.clone();
-            let _ = app.emit(
-                EVENT_STATE,
-                StateEvent {
-                    id: job.id.clone(),
-                    status: JobStatus::Queued,
-                    kind: job.kind,
-                    engine: job.engine.clone(),
-                    title: Some(display_name.clone()),
-                    error: None,
-                },
-            );
-            let files: Vec<TorrentFileInfo> = status
-                .files
-                .iter()
-                .map(|f| TorrentFileInfo {
-                    index: f.index,
-                    path: f.path.clone(),
-                    length: f.length,
-                    selected: f.selected,
-                })
-                .collect();
-            let _ = app.emit(
-                EVENT_TORRENT_READY,
-                TorrentReadyEvent {
-                    job_id: job.id.clone(),
-                    name: display_name,
-                    files,
-                },
-            );
+        if job.kind == JobKind::Torrent && !status.is_metadata_only() {
+            cache_torrent_files(&app, &job, &daemon, &gid, &status).await;
         }
-
+        let transfer = job.kind == JobKind::File || job.torrent_selected.load(Ordering::SeqCst);
+        let seeding = job.kind == JobKind::Torrent
+            && transfer
+            && status.total() > 0
+            && status.completed() >= status.total();
+        if transfer
+            && !seeding
+            && gate_guard.is_none()
+            && matches!(status.status.as_str(), "paused" | "waiting" | "active")
+        {
+            drop(control);
+            gate_guard = GateGuard::acquire(queue.gate.clone(), &job).await;
+            job.kill.notify_one();
+            continue;
+        }
         match status.status.as_str() {
             "active" => {
-                // A finished BitTorrent task keeps "active" while seeding;
-                // surface that instead of a stuck "Downloading" at 100%.
-                let seeding = job.kind == JobKind::Torrent
-                    && status.total() > 0
-                    && status.completed() >= status.total();
-                let current = job.status.lock().await.0.clone();
                 let want = if seeding {
+                    drop(gate_guard.take());
                     JobStatus::Seeding
-                } else if current != JobStatus::Downloading && current != JobStatus::Merging {
+                } else if transfer {
                     JobStatus::Downloading
                 } else {
-                    current
+                    JobStatus::Queued
                 };
                 if want != job.status.lock().await.0 {
                     set_status(&app, &job, want, None).await;
                 }
-                {
-                    let mut progress = job.progress.lock().await;
-                    progress.downloaded = status.completed() as f64;
-                    progress.total = Some(status.total() as f64);
-                    progress.speed = status.speed();
-                    progress.eta = status.eta();
-                    if let Some(f) = status.files.last() {
-                        progress.filename = Some(f.path.clone());
+                let mut progress = job.progress.lock().await;
+                if transfer {
+                    update_aria2_progress(&mut progress, &status, job.kind, seeding);
+                }
+                emit_progress(&app, &job, &mut progress, false);
+            }
+            "paused" => {
+                let metadata =
+                    job.phase() == Some(TorrentPhase::Metadata) && status.is_metadata_only();
+                if (transfer || metadata) && !queue.is_shutting_down().await {
+                    if let Err(error) = daemon.unpause(&gid).await {
+                        if let Ok(current) = daemon.tell_status(&gid).await {
+                            if current.status != "paused" {
+                                if transfer
+                                    && matches!(current.status.as_str(), "active" | "waiting")
+                                {
+                                    job.torrent.lock().await.check_retry_paths = false;
+                                }
+                                job.kill.notify_one();
+                                continue;
+                            }
+                        }
+                        drop(gate_guard.take());
+                        clear_transfer_stats(&app, &job).await;
+                        set_status(&app, &job, JobStatus::Failed, Some(error.to_string())).await;
+                        record_history(&app, &job, JobStatus::Failed, 0).await;
+                        break;
                     }
-                    let throttled = last_emit
-                        .map(|t| t.elapsed() >= EMIT_INTERVAL)
-                        .unwrap_or(true);
-                    if throttled {
-                        last_emit = Some(Instant::now());
-                        let _ = app.emit(
-                            EVENT_PROGRESS,
-                            ProgressEvent {
-                                id: job.id.clone(),
-                                downloaded_bytes: progress.downloaded,
-                                total_bytes: progress.total,
-                                speed: progress.speed,
-                                eta: progress.eta,
-                            },
-                        );
+                    if transfer {
+                        job.torrent.lock().await.check_retry_paths = false;
                     }
                 }
             }
-            "paused" | "waiting" => {
-                let current = job.status.lock().await.0.clone();
-                if current != JobStatus::Queued && current != JobStatus::Paused {
-                    set_status(&app, &job, JobStatus::Paused, None).await;
+            "waiting" => {
+                if job.status.lock().await.0 != JobStatus::Queued {
+                    clear_transfer_stats(&app, &job).await;
+                    set_status(&app, &job, JobStatus::Queued, None).await;
                 }
             }
             "complete" => {
-                // Magnet flow: the metadata task "completes" and aria2 moves
-                // the real download to a NEW gid (followedBy). Follow the
-                // chain instead of settling the job early.
-                if let Some(next_gid) = status.followed_by.first() {
-                    *job.gid.lock().await = Some(next_gid.clone());
-                    log::info!("torrent metadata done, following {}", next_gid);
-                    continue; // keep polling with the new gid
+                drop(gate_guard.take());
+                let mut selected = status
+                    .files
+                    .iter()
+                    .filter(|file| file.selected && !file.path.is_empty());
+                let filename = selected
+                    .next()
+                    .filter(|_| selected.next().is_none())
+                    .map(|file| file.path.clone());
+                {
+                    let mut progress = job.progress.lock().await;
+                    progress.filename = filename;
+                    progress.downloaded = status.completed() as f64;
+                    progress.total = Some(status.total() as f64);
+                    progress.fraction = Some(1.0);
+                    progress.speed = 0.0;
+                    progress.connections = None;
+                    progress.seeders = None;
+                    progress.upload_speed = None;
+                    progress.eta = 0.0;
+                    emit_progress(&app, &job, &mut progress, true);
                 }
                 set_status(&app, &job, JobStatus::Completed, None).await;
-                // aria2 removes its control file on clean completion, but a
-                // killed daemon can leave a stale `<file>.aria2` behind.
-                if let Some(f) = status.files.first() {
-                    let control = format!("{}.aria2", f.path);
-                    match std::fs::remove_file(&control) {
-                        Ok(_) => log::info!("removed stale control file {control}"),
-                        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
-                            log::warn!("could not remove control file {control}: {e}")
-                        }
-                        _ => {}
-                    }
-                }
                 record_history(&app, &job, JobStatus::Completed, status.total() as i64).await;
                 break;
             }
             "error" => {
+                drop(gate_guard.take());
+                clear_transfer_stats(&app, &job).await;
                 let msg = status
                     .error_message
                     .clone()
                     .unwrap_or_else(|| "aria2 reported an error".into());
-                set_status(&app, &job, JobStatus::Failed, Some(msg)).await;
+                set_status_with_code(&app, &job, JobStatus::Failed, Some(msg), status.error_code)
+                    .await;
                 record_history(&app, &job, JobStatus::Failed, status.completed() as i64).await;
                 delete_pending(&app, &job.id).await;
                 break;
             }
             "removed" => {
+                drop(gate_guard.take());
+                clear_transfer_stats(&app, &job).await;
                 set_status(&app, &job, JobStatus::Canceled, None).await;
                 delete_pending(&app, &job.id).await;
                 break;
@@ -1730,7 +2281,111 @@ async fn run_aria2_job(
             _ => {}
         }
     }
-    let _ = queue;
+}
+
+fn update_aria2_progress(
+    progress: &mut Progress,
+    status: &Aria2Status,
+    kind: JobKind,
+    finished: bool,
+) {
+    progress.downloaded = status.completed() as f64;
+    progress.total = (status.total() > 0).then(|| status.total() as f64);
+    progress.speed = if finished { 0.0 } else { status.speed() };
+    progress.eta = if finished { 0.0 } else { status.eta() };
+    progress.connections = status.connections;
+    if kind == JobKind::Torrent {
+        progress.seeders = status.seeders;
+        progress.upload_speed = status.upload_speed;
+    }
+    if let Some(file) = status
+        .files
+        .iter()
+        .find(|file| file.selected && !file.path.is_empty())
+    {
+        progress.filename = Some(file.path.clone());
+    }
+}
+
+async fn check_retry_torrent_paths(status: &Aria2Status) -> Result<(), String> {
+    for file in &status.files {
+        match tokio::fs::symlink_metadata(&file.path).await {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && !file.path.is_empty() => {
+            }
+            _ => return Err("Retry cannot safely write to an existing torrent destination".into()),
+        }
+    }
+    Ok(())
+}
+
+async fn cache_torrent_files(
+    app: &AppHandle,
+    job: &Job,
+    daemon: &Aria2Daemon,
+    gid: &str,
+    status: &Aria2Status,
+) {
+    let mut torrent = job.torrent.lock().await;
+    if torrent.hash.is_none() {
+        torrent.hash.clone_from(&status.info_hash);
+    }
+    if !torrent.files.is_empty() {
+        return;
+    }
+    torrent.files = status
+        .files
+        .iter()
+        .map(|file| TorrentFileInfo {
+            index: file.index,
+            path: file.path.clone(),
+            length: file.length,
+            selected: file.selected,
+        })
+        .collect();
+    let name = status.torrent_name().unwrap_or_else(|| "Torrent".into());
+    *job.title.lock().await = name.clone();
+    if matches!(status.status.as_str(), "error" | "complete" | "removed") {
+        return;
+    }
+    let proposed = std::mem::take(&mut torrent.retry_selection);
+    let keep_selection = !proposed.is_empty()
+        && torrent
+            .hash
+            .as_ref()
+            .zip(status.info_hash.as_ref())
+            .is_some_and(|(old, new)| old.eq_ignore_ascii_case(new))
+        && proposed
+            .iter()
+            .all(|index| torrent.files.iter().any(|file| file.index == *index))
+        && daemon.select_files(gid, &proposed).await.is_ok();
+    if keep_selection {
+        remember_selection(&mut torrent, proposed);
+        job.torrent_selected.store(true, Ordering::SeqCst);
+        job.set_phase(None);
+    } else if !job.torrent_selected.load(Ordering::SeqCst) {
+        job.set_phase(Some(TorrentPhase::SelectFiles));
+    }
+    let files = torrent.files.clone();
+    drop(torrent);
+    let current = job.status.lock().await.0.clone();
+    emit_state(app, job, current, Some(name.clone()), None).await;
+    if job.phase() == Some(TorrentPhase::SelectFiles) {
+        let _ = app.emit(
+            EVENT_TORRENT_READY,
+            TorrentReadyEvent {
+                job_id: job.id.clone(),
+                name,
+                files,
+            },
+        );
+    }
+}
+
+fn remember_selection(torrent: &mut TorrentData, indices: Vec<u64>) {
+    for file in &mut torrent.files {
+        file.selected = indices.binary_search(&file.index).is_ok();
+    }
+    torrent.selection = indices;
 }
 
 /// Removes a job from the persistent pending queue (non-fatal).
@@ -1837,7 +2492,7 @@ async fn record_history(app: &AppHandle, job: &Job, status: JobStatus, total_byt
 
 /// Files of a torrent job (for the selection modal).
 pub async fn torrent_files(
-    app: AppHandle,
+    _app: AppHandle,
     queue: State<'_, QueueManager>,
     job_id: String,
 ) -> Result<TorrentReadyEvent, String> {
@@ -1848,23 +2503,18 @@ pub async fn torrent_files(
         .get(&job_id)
         .cloned()
         .ok_or("no such job")?;
-    let gid = job.gid.lock().await.clone().ok_or("job has no gid yet")?;
-    let daemon = ensure_aria2(&app).await?;
-    let status = daemon.tell_status(&gid).await.map_err(|e| e.to_string())?;
-    let fallback_title = job.title.lock().await.clone();
+    if job.kind != JobKind::Torrent {
+        return Err("job is not a torrent".into());
+    }
+    let torrent = job.torrent.lock().await;
+    if torrent.files.is_empty() {
+        return Err("torrent metadata unavailable".into());
+    }
+    let name = job.title.lock().await.clone();
     Ok(TorrentReadyEvent {
-        job_id: job.id.clone(),
-        name: status.torrent_name().unwrap_or(fallback_title),
-        files: status
-            .files
-            .iter()
-            .map(|f| TorrentFileInfo {
-                index: f.index,
-                path: f.path.clone(),
-                length: f.length,
-                selected: f.selected,
-            })
-            .collect(),
+        job_id,
+        name,
+        files: torrent.files.clone(),
     })
 }
 
@@ -1873,7 +2523,7 @@ pub async fn select_torrent_files(
     app: AppHandle,
     queue: State<'_, QueueManager>,
     job_id: String,
-    indices: Vec<u64>,
+    mut indices: Vec<u64>,
 ) -> Result<(), String> {
     let job = queue
         .jobs
@@ -1882,34 +2532,49 @@ pub async fn select_torrent_files(
         .get(&job_id)
         .cloned()
         .ok_or("no such job")?;
-    let gid = job.gid.lock().await.clone().ok_or("job has no gid yet")?;
-    let daemon = ensure_aria2(&app).await?;
-    if indices.is_empty() {
-        return Err("no files selected".into());
+    let _control = job.control.lock().await;
+    if job.phase() != Some(TorrentPhase::SelectFiles) {
+        return Err("torrent is not awaiting file selection".into());
     }
+    let mut torrent = job.torrent.lock().await;
+    indices.sort_unstable();
+    indices.dedup();
+    if indices.is_empty()
+        || !indices
+            .iter()
+            .all(|i| torrent.files.iter().any(|file| file.index == *i))
+    {
+        return Err("invalid torrent file selection".into());
+    }
+    let daemon = job
+        .daemon
+        .lock()
+        .await
+        .upgrade()
+        .ok_or("torrent engine unavailable")?;
+    let gid = job.gid.lock().await.clone().ok_or("job has no gid yet")?;
     daemon
         .select_files(&gid, &indices)
         .await
         .map_err(|e| e.to_string())?;
+    remember_selection(&mut torrent, indices);
+    drop(torrent);
+    job.set_phase(None);
     job.torrent_selected.store(true, Ordering::SeqCst);
-    daemon.unpause(&gid).await.map_err(|e| e.to_string())?;
+    job.pause_requested.store(false, Ordering::SeqCst);
     set_status(&app, &job, JobStatus::Queued, None).await;
+    job.kill.notify_one();
     Ok(())
 }
 
-/// Adjusts the parallel-download gate and aria2's global concurrency.
+/// Adjusts the shared transfer gate.
 pub async fn set_parallel(
-    app: AppHandle,
+    _app: AppHandle,
     queue: State<'_, QueueManager>,
     n: u32,
 ) -> Result<(), String> {
-    let n = n.clamp(1, 16);
-    queue.gate.set_limit(n);
-    let daemon = ensure_aria2(&app).await?;
-    daemon
-        .set_global_option("max-concurrent-downloads", &n.to_string())
-        .await
-        .map_err(|e| e.to_string())
+    queue.gate.set_limit(n.clamp(1, 16));
+    Ok(())
 }
 
 /// Pauses every running or queued download without holding queue locks over RPC.
@@ -1925,13 +2590,9 @@ pub async fn pause_all_jobs(app: AppHandle, queue: State<'_, QueueManager>) -> u
             continue;
         }
         if job.engine == "aria2" {
-            job.pause_requested.store(true, Ordering::SeqCst);
-            if let Some(gid) = job.gid.lock().await.clone() {
-                if let Ok(daemon) = ensure_aria2(&app).await {
-                    let _ = daemon.pause(&gid).await;
-                }
+            if pause_aria2_job(&app, &job).await.is_err() {
+                continue;
             }
-            set_status(&app, &job, JobStatus::Paused, None).await;
         } else {
             job.pause_requested.store(true, Ordering::SeqCst);
             job.kill.notify_one();
@@ -1951,28 +2612,22 @@ pub async fn resume_all_jobs(app: AppHandle, queue: State<'_, QueueManager>) -> 
         }
         let app = app.clone();
         if job.engine == "aria2" {
-            job.pause_requested.store(false, Ordering::SeqCst);
-            if let Some(gid) = job.gid.lock().await.clone() {
-                if let Ok(daemon) = ensure_aria2(&app).await {
-                    let _ = daemon.unpause(&gid).await;
-                    set_status(&app, &job, JobStatus::Queued, None).await;
-                    resumed += 1;
-                }
+            if resume_aria2_job(&app, &job).await.is_ok() {
+                resumed += 1;
             }
         } else if let Some(spec) = job.spec.clone() {
             let binary = engines::find_engine(&app, "yt-dlp");
             let ffmpeg = engines::find_engine(&app, "ffmpeg");
             if let Some(binary) = binary {
-                if let Ok(args) = ytdlp::download_args(&spec, ffmpeg.as_ref()) {
+                if let Ok(args) = safe_video_resume_args(&spec, ffmpeg.as_ref()) {
                     if !claim_runner(&job) {
                         continue;
                     }
                     job.pause_requested.store(false, Ordering::SeqCst);
                     set_status(&app, &job, JobStatus::Queued, None).await;
-                    let rank = rank_of(&queue, &job.id).await;
                     tokio::spawn(async move {
                         let queue: State<'_, QueueManager> = app.state();
-                        run_video_job(app.clone(), &queue, job, binary, args, rank).await;
+                        run_video_job(app.clone(), &queue, job, binary, args).await;
                     });
                     resumed += 1;
                 }
@@ -2048,8 +2703,171 @@ pub async fn set_proxy(app: AppHandle, proxy: String) -> Result<(), String> {
 }
 
 #[cfg(test)]
+mod queue_tests {
+    use super::*;
+
+    #[test]
+    fn recreated_download_cannot_overwrite_a_destination() {
+        let options = retry_aria2_options(Some("downloads"), "0000000000001234");
+        assert_eq!(options["dir"], "downloads");
+        assert_eq!(options["gid"], "0000000000001234");
+        assert_eq!(options["allow-overwrite"], "false");
+        assert_eq!(options["auto-file-renaming"], "false");
+        assert_eq!(options["continue"], "false");
+    }
+
+    #[tokio::test]
+    async fn failed_local_torrent_requires_the_original_torrent() {
+        let mut job = base_job("torrent".into(), "Example".into(), None);
+        job.kind = JobKind::Torrent;
+        let payload = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            b"d4:infod4:name4:test6:lengthi1eee",
+        );
+        let hash = torrent_payload_hash(&payload).unwrap();
+        let failed = JobStatus::Failed;
+        assert!(job.retry_needs_torrent(&failed));
+        assert!(job.can_retry(&failed));
+        assert_eq!(
+            validate_retry_torrent(None, Some(&hash))
+                .unwrap_err()
+                .code(),
+            "retryNeedsTorrent"
+        );
+        assert_eq!(
+            validate_retry_torrent(Some(&payload), Some("different"))
+                .unwrap_err()
+                .code(),
+            "retryTorrentMismatch"
+        );
+        assert!(validate_retry_torrent(Some(&payload), Some(&hash)).is_ok());
+    }
+
+    #[test]
+    fn changing_the_order_reprioritizes_already_waiting_jobs() {
+        let gate = Gate::new(1);
+        gate.set_order(&["first".into(), "second".into()]);
+        let active = gate.register("active");
+        assert!(gate.try_acquire(active));
+        let first = gate.register("first");
+        let second = gate.register("second");
+        assert!(!gate.try_acquire(second));
+        gate.set_order(&["second".into(), "first".into()]);
+        gate.release();
+        assert!(!gate.try_acquire(first));
+        assert!(gate.try_acquire(second));
+    }
+
+    #[tokio::test]
+    async fn gate_snapshot_tracks_pause_release_and_reacquisition() {
+        let gate = Arc::new(Gate::new(1));
+        let first = base_job("first".into(), "first".into(), None);
+        let next = base_job("next".into(), "next".into(), None);
+        let held = GateGuard::acquire(gate.clone(), &first).await.unwrap();
+        assert_eq!(
+            serde_json::to_value(gate.snapshot()).unwrap(),
+            json!({"inUse": 1, "limit": 1})
+        );
+        drop(held);
+        assert_eq!(gate.snapshot().in_use, 0);
+        let held = GateGuard::acquire(gate.clone(), &next).await.unwrap();
+        gate.set_limit(3);
+        assert_eq!(
+            gate.snapshot(),
+            QueueSlots {
+                in_use: 1,
+                limit: 3
+            }
+        );
+        drop(held);
+        assert_eq!(
+            gate.snapshot(),
+            QueueSlots {
+                in_use: 0,
+                limit: 3
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn job_snapshot_keeps_torrent_phase_separate_from_queue_status() {
+        let mut job = base_job("torrent".into(), "Example".into(), None);
+        job.kind = JobKind::Torrent;
+        *job.torrent_phase.lock().unwrap() = Some(TorrentPhase::Metadata);
+        let view = serde_json::to_value(job_view(&job).await).unwrap();
+        assert_eq!(view["status"], "queued");
+        assert_eq!(view["torrentPhase"], "metadata");
+        assert!(view["connections"].is_null());
+        assert!(view["thumbnail"].is_null());
+        assert_eq!(view["canRetry"], false);
+        *job.torrent_phase.lock().unwrap() = Some(TorrentPhase::SelectFiles);
+        assert_eq!(
+            serde_json::to_value(job_view(&job).await).unwrap()["torrentPhase"],
+            "selectFiles"
+        );
+    }
+}
+
+#[cfg(test)]
 mod settings_tests {
-    use super::{valid_seed_ratio, valid_speed_limit};
+    use super::{
+        completed_file_in, is_playable_media, read_engine_record, valid_seed_ratio,
+        valid_speed_limit, FfmpegProgress, Progress,
+    };
+    use std::path::Path;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn completed_actions_only_resolve_files_inside_the_download_folder() {
+        let root = std::env::temp_dir().join(format!("gruzly-opener-{}", uuid::Uuid::new_v4()));
+        let folder = root.join("downloads");
+        std::fs::create_dir_all(folder.join("nested")).unwrap();
+        std::fs::write(folder.join("nested/movie.MP4"), []).unwrap();
+        std::fs::write(root.join("outside.mp4"), []).unwrap();
+        let canonical = folder.canonicalize().unwrap();
+        let movie = completed_file_in(&canonical, Path::new("nested/movie.MP4"));
+        let outside = completed_file_in(&canonical, &root.join("outside.mp4"));
+        let missing = completed_file_in(&canonical, Path::new("missing.mp4"));
+        std::fs::remove_dir_all(root).unwrap();
+
+        assert!(movie.is_some_and(|file| is_playable_media(&file)));
+        assert!(outside.is_none());
+        assert!(missing.is_none());
+        assert!(!is_playable_media(Path::new("movie.mp4.exe")));
+    }
+    use tokio::io::{AsyncWriteExt, BufReader};
+
+    #[tokio::test]
+    async fn reads_ffmpeg_progress_before_pipe_closes() {
+        let (mut writer, reader) = tokio::io::duplex(256);
+        let mut reader = BufReader::new(reader);
+        writer
+            .write_all(b"size= 256KiB time=00:00:02.00\rsize= 512KiB time=00:00:04.00\r")
+            .await
+            .unwrap();
+        let mut ffmpeg = FfmpegProgress::default();
+        let mut progress = Progress::default();
+        let now = Instant::now();
+        for i in 0..2 {
+            let record =
+                tokio::time::timeout(Duration::from_secs(1), read_engine_record(&mut reader))
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap();
+            assert!(ffmpeg.update(
+                &mut progress,
+                &record,
+                Some(8.0),
+                now + Duration::from_secs(i)
+            ));
+        }
+        assert_eq!(progress.downloaded, 512.0 * 1024.0);
+        assert_eq!(progress.total, None);
+        assert_eq!(progress.fraction, Some(0.5));
+        assert_eq!(progress.speed, 256.0 * 1024.0);
+        assert_eq!(progress.eta, 2.0);
+    }
 
     #[test]
     fn validates_speed_limits() {

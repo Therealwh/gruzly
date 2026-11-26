@@ -359,7 +359,7 @@ function PlaylistPreview({
             sponsorblock: settings.sponsorblock,
             cookiesBrowser: settings.cookiesEnabled && !settings.cookiesFile ? settings.cookiesBrowser : null,
             cookiesFile: settings.cookiesEnabled && settings.cookiesFile ? settings.cookiesFile : null,
-            duration: null,
+            duration: entry.duration ?? null,
             limitRate: settings.speedLimit || null,
             proxy: proxyUrl(settings),
           },

@@ -197,12 +197,24 @@ export async function resumeJob(id: string): Promise<void> {
   return call<void>("resume_job", { id });
 }
 
+export async function retryJob(id: string, torrentBase64: string | null = null): Promise<string> {
+  return call<string>("retry_job", { id, torrentBase64 });
+}
+
+export async function queueSlots(): Promise<QueueSlots> {
+  return call<QueueSlots>("queue_slots");
+}
+
 export async function cancelJob(id: string): Promise<void> {
   return call<void>("cancel_job", { id });
 }
 
 export async function removeJob(id: string): Promise<void> {
   return call<void>("remove_job", { id });
+}
+
+export async function openCompletedDownload(id: string, play = false): Promise<void> {
+  return call<void>("open_completed_download", { id, play });
 }
 
 export async function listJobs(): Promise<JobView[]> {
@@ -323,8 +335,24 @@ export type JobStatus =
   | "canceled";
 
 export type JobKind = "video" | "file" | "torrent";
+export type TorrentPhase = "metadata" | "selectFiles";
+export type QueueSlots = { inUse: number; limit: number };
 
-export type JobView = {
+type JobDetails = {
+  torrentPhase?: TorrentPhase | null;
+  thumbnail?: string | null;
+  canRetry?: boolean;
+  retryNeedsTorrent?: boolean;
+  errorCode?: number | string | null;
+};
+
+type TorrentMetrics = {
+  connections?: number | null;
+  seeders?: number | null;
+  uploadSpeed?: number | null;
+};
+
+export type JobView = JobDetails & TorrentMetrics & {
   id: string;
   kind: JobKind;
   engine: string;
@@ -336,24 +364,28 @@ export type JobView = {
   error: string | null;
   downloadedBytes: number;
   totalBytes: number | null;
+  fraction: number | null;
   speed: number;
   eta: number;
   createdAt: number;
 };
 
-export type ProgressEvent = {
+export type ProgressEvent = TorrentMetrics & {
   id: string;
   downloadedBytes: number;
   totalBytes: number | null;
+  fraction: number | null;
   speed: number;
   eta: number;
 };
 
-export type StateEvent = {
+export type StateEvent = JobDetails & {
   id: string;
   status: JobStatus;
   kind: JobKind;
   engine: string;
   title: string | null;
+  folder: string | null;
+  filename: string | null;
   error: string | null;
 };

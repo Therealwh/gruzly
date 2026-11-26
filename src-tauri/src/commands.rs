@@ -5,7 +5,9 @@ use tauri::State;
 
 use crate::core::db::HistoryRecord;
 use crate::core::engines::{self, EngineInfo};
-use crate::core::queue::{self, JobView, QueueManager, TorrentReadyEvent, TorrentSource};
+use crate::core::queue::{
+    self, JobView, QueueManager, QueueSlots, TorrentReadyEvent, TorrentSource,
+};
 use crate::core::ytdlp::{self, Analysis, VideoDownloadSpec};
 use crate::AppState;
 
@@ -36,10 +38,10 @@ impl CommandError {
 type CmdResult<T> = Result<T, CommandError>;
 
 #[tauri::command]
-pub fn get_app_info() -> AppInfo {
+pub fn get_app_info(app: tauri::AppHandle) -> AppInfo {
     AppInfo {
         name: env!("CARGO_PKG_NAME").to_string(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        version: app.package_info().version.to_string(),
         os: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
     }
@@ -154,6 +156,18 @@ pub async fn resume_job(
 }
 
 #[tauri::command]
+pub async fn retry_job(
+    app: tauri::AppHandle,
+    queue: State<'_, QueueManager>,
+    id: String,
+    torrent_base64: Option<String>,
+) -> CmdResult<String> {
+    queue::retry_job(app, queue, id, torrent_base64)
+        .await
+        .map_err(|e| CommandError::of(e.code(), e.to_string()))
+}
+
+#[tauri::command]
 pub async fn cancel_job(queue: State<'_, QueueManager>, id: String) -> CmdResult<()> {
     queue::cancel_job(queue, id)
         .await
@@ -170,6 +184,22 @@ pub async fn remove_job(queue: State<'_, QueueManager>, id: String) -> CmdResult
 #[tauri::command]
 pub async fn list_jobs(queue: State<'_, QueueManager>) -> CmdResult<Vec<JobView>> {
     Ok(queue::list_jobs(queue).await)
+}
+
+#[tauri::command]
+pub fn queue_slots(queue: State<'_, QueueManager>) -> QueueSlots {
+    queue.slots()
+}
+
+#[tauri::command]
+pub async fn open_completed_download(
+    queue: State<'_, QueueManager>,
+    id: String,
+    play: bool,
+) -> CmdResult<()> {
+    queue::open_completed_download(queue, &id, play)
+        .await
+        .map_err(|err| CommandError::of("jobOp", err))
 }
 
 #[tauri::command]

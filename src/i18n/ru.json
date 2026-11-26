@@ -104,11 +104,15 @@
     }
   },
   "downloads": {
+    "rowActions": "Действия для «{{title}}»",
+    "showInFolder": "Открыть папку с файлом",
+    "playVideo": "Воспроизвести",
     "title": "Загрузки",
     "tabs": {
       "active": "Активные",
       "queued": "Очередь",
-      "completed": "Завершённые"
+      "completed": "Завершённые",
+      "errors": "Ошибки"
     },
     "searchPlaceholder": "Поиск по загрузкам…",
     "filterAll": "Все",
@@ -121,7 +125,11 @@
       "queued": "Очередь пуста",
       "queuedHint": "Здесь будут задачи, ожидающие запуска",
       "completed": "Пока ничего не завершено",
-      "completedHint": "Завершённые загрузки появятся здесь"
+      "completedHint": "Завершённые загрузки появятся здесь",
+      "errors": "Нет загрузок с ошибками",
+      "errorsHint": "Здесь появятся загрузки с ошибками",
+      "noResults": "Ничего не найдено",
+      "noResultsHint": "Измените запрос или выберите другой тип загрузки"
     },
     "limits": {
       "speedLimit": "Лимит скорости",
@@ -140,8 +148,45 @@
       "eta": "Осталось",
       "peers": "Пиры",
       "seeds": "Сиды",
-      "ratio": "Ратио"
-    }
+      "ratio": "Ратио",
+      "connections": "Соединения",
+      "seeders": "Подключённые сиды",
+      "folder": "Папка",
+      "selectedFiles": "Выбранные файлы",
+      "loadingFiles": "Получение списка файлов…",
+      "filesUnavailable": "Список файлов недоступен",
+      "filesSummary": "Выбрано: {{count}} · {{size}}",
+      "moreFiles": "Показать ещё {{count}}",
+      "engineError": "Ошибка движка"
+    },
+    "columns": {
+      "task": "Задача",
+      "progress": "Прогресс",
+      "actions": "Действия"
+    },
+    "summary": {
+      "downloadSpeed": "Скачивание",
+      "uploadSpeed": "Отдача",
+      "slots": "Слоты"
+    },
+    "reorder": {
+      "handle": "Изменить позицию «{{title}}»",
+      "hint": "Нажмите Enter или пробел, чтобы взять или отпустить задачу. Для перемещения используйте стрелки вверх и вниз, для отмены — Esc.",
+      "moved": "«{{title}}» перемещена на позицию {{position}} из {{count}}",
+      "position": "«{{title}}», позиция {{position}} из {{count}}"
+    },
+    "phase": {
+      "metadata": "Получение метаданных…",
+      "selectFiles": "Ожидание выбора файлов",
+      "waitingForPeers": "Ожидание пиров…",
+      "waitingForSlot": "Ожидание места в очереди"
+    },
+    "copyDetails": "Скопировать детали",
+    "retryWithTorrent": "Выбрать исходный файл .torrent",
+    "retryQueued": "Загрузка снова в очереди",
+    "retryFailed": "Не удалось повторить загрузку",
+    "detailsCopied": "Сведения об ошибке скопированы",
+    "selectionConfirmed": "Файлы выбраны. Загрузка в очереди."
   },
   "video": {
     "title": "Видео",
@@ -440,6 +485,8 @@
     "copiedPath": "Путь скопирован"
   },
   "errors": {
+    "playDownload": "Не удалось открыть скачанное видео.",
+    "openDownloadFolder": "Не удалось открыть папку загрузки.",
     "title": "Что-то пошло не так",
     "generic": "Непредвиденная ошибка. Попробуйте ещё раз.",
     "retry": "Повторить",

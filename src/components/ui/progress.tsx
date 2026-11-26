@@ -30,8 +30,7 @@ export function ProgressBar({
     >
       {indeterminate ? (
         <div
-          className={cn("absolute h-full rounded-full", fillTone)}
-          style={{ animation: "indeterminate 1.1s ease-in-out infinite" }}
+          className={cn("absolute left-0 h-full w-2/5 rounded-full motion-safe:animate-indeterminate", fillTone)}
         />
       ) : (
         <div

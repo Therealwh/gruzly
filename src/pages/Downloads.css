@@ -1,0 +1,97 @@
+.downloads-list {
+  container-type: inline-size;
+}
+
+.downloads-scroll,
+.downloads-header {
+  scrollbar-gutter: stable;
+}
+
+/* Reserve the same gutter in the fixed header and the virtualized body. */
+.downloads-header {
+  overflow-y: hidden;
+  border-radius: 0.75rem 0.75rem 0 0;
+}
+
+.downloads-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(4rem, 0.35fr) minmax(6.75rem, 0.55fr) minmax(5.25rem, 0.42fr) minmax(4.5rem, 0.4fr) 7.5rem;
+  grid-template-areas: "task progress size speed eta actions";
+  align-items: center;
+  gap: 0.5rem;
+  padding-inline: 0.75rem;
+}
+
+.downloads-header {
+  padding-block: 0.5rem;
+}
+
+.downloads-row {
+  min-height: 3.875rem;
+  padding-block: 0.625rem;
+}
+
+.downloads-row-selected,
+.downloads-row-selected:hover {
+  background-color: var(--accent-soft);
+}
+
+[data-download-density="compact"] .downloads-row {
+  min-height: 3.3125rem;
+  padding-block: 0.375rem;
+}
+
+.downloads-task { grid-area: task; }
+.downloads-progress { grid-area: progress; }
+.downloads-size { grid-area: size; }
+.downloads-speed { grid-area: speed; }
+.downloads-eta { grid-area: eta; }
+.downloads-actions { grid-area: actions; }
+
+.downloads-progress .downloads-metric-value {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.downloads-metric-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.downloads-metric-label {
+  display: none;
+}
+
+@container (max-width: 43rem) {
+  .downloads-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) minmax(0, 0.85fr) minmax(7.5rem, 0.85fr);
+    grid-template-areas:
+      "task task task actions"
+      "progress size speed eta";
+    gap: 0.4rem 0.75rem;
+  }
+
+  .downloads-header {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .downloads-metric-label {
+    display: block;
+    margin-bottom: 0.125rem;
+  }
+}
+
+@container (max-width: 23rem) {
+  .downloads-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas:
+      "task actions"
+      "progress size"
+      "speed eta";
+  }
+}

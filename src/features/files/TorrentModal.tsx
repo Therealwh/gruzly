@@ -2,32 +2,32 @@ import { Check, Download, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button, Modal, toast } from "@/components/ui";
-import { cancelJob, CommandError, selectTorrentFiles } from "@/lib/api";
+import { cancelJob, CommandError, selectTorrentFiles, type TorrentReadyEvent } from "@/lib/api";
 import { formatBytes } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useQueueStore } from "@/stores/queue";
 
 /**
  * Torrent file selection: metadata resolved, user picks files, transfer starts.
- * Dismissing cancels the torrent job (nothing was selected).
+ * Dismissing leaves the task waiting for selection.
  */
 export function TorrentModal() {
+  const info = useQueueStore((state) => state.torrentReady);
+  return info ? <TorrentPicker key={info.jobId} info={info} /> : null;
+}
+
+function TorrentPicker({ info }: { info: TorrentReadyEvent }) {
   const { t } = useTranslation();
-  const { torrentReady, dismissTorrent } = useQueueStore();
+  const dismissTorrent = useQueueStore((state) => state.dismissTorrent);
   const [selected, setSelected] = useState<Set<number> | null>(null);
   const [starting, setStarting] = useState(false);
-
-  const info = torrentReady;
   const effective = useMemo(() => {
-    if (!info) return null;
     if (selected === null) {
       // initial: preselect what aria2 marked selected
       return new Set(info.files.filter((f) => f.selected).map((f) => f.index));
     }
     return selected;
   }, [info, selected]);
-
-  if (!info || !effective) return null;
 
   const totalSelected = info.files
     .filter((f) => effective.has(f.index))
@@ -36,16 +36,16 @@ export function TorrentModal() {
 
   const close = () => {
     setSelected(null);
-    dismissTorrent();
+    dismissTorrent(info.jobId);
   };
 
   const cancel = async () => {
     try {
       await cancelJob(info.jobId);
+      close();
     } catch {
-      /* already gone */
+      toast.error(t("errors.generic"));
     }
-    close();
   };
 
   const confirm = async () => {
@@ -56,13 +56,13 @@ export function TorrentModal() {
     setStarting(true);
     try {
       await selectTorrentFiles(info.jobId, [...effective]);
-      toast.success(t("toasts.downloadStarted"));
+      toast.success(t("downloads.selectionConfirmed"));
       close();
     } catch (e) {
       if (e instanceof CommandError && e.code === "browserMode") {
         toast.warning(t("errors.generic"));
       } else {
-        toast.error(t("errors.generic"));
+        toast.error(e instanceof Error ? e.message : t("errors.generic"));
       }
     } finally {
       setStarting(false);
@@ -73,7 +73,7 @@ export function TorrentModal() {
     <Modal
       open
       onOpenChange={(v) => {
-        if (!v) void cancel();
+        if (!v && !starting) close();
       }}
       title={info.name}
       description={t("files.torrent.selectFiles")}
@@ -101,6 +101,9 @@ export function TorrentModal() {
           return (
             <button
               key={f.index}
+              type="button"
+              aria-pressed={on}
+              disabled={starting}
               onClick={() =>
                 setSelected((prev) => {
                   const base = prev ?? new Set(info.files.filter((x) => x.selected).map((x) => x.index));
@@ -134,7 +137,7 @@ export function TorrentModal() {
       </div>
 
       <div className="mt-4 flex items-center justify-end gap-2">
-        <Button variant="ghost" onClick={() => void cancel()}>
+        <Button variant="ghost" disabled={starting} onClick={() => void cancel()}>
           <X className="h-3.5 w-3.5" aria-hidden />
           {t("common.cancel")}
         </Button>

@@ -4,27 +4,35 @@ import { t } from "@/lib/i18n";
 import {
   isTauri,
   listJobs,
+  queueSlots,
   setJobOrder,
   type JobView,
   type ProgressEvent,
+  type QueueSlots,
   type StateEvent,
   type TorrentReadyEvent,
 } from "@/lib/api";
+
+let orderWrite = Promise.resolve();
 
 type QueueState = {
   jobs: Map<string, JobView>;
   order: string[];
   connected: boolean;
+  slots: QueueSlots | null;
   /** Last yt-dlp/aria2 status line per job (live activity). */
   activity: Map<string, string>;
   /** Torrent whose metadata resolved and awaits file selection. */
   torrentReady: TorrentReadyEvent | null;
+  pendingTorrents: TorrentReadyEvent[];
+  pendingActions: Set<string>;
+  setActionPending: (id: string, pending: boolean) => boolean;
   hydrate: () => Promise<void>;
   applyProgress: (e: ProgressEvent) => void;
   applyState: (e: StateEvent) => void;
   applyActivity: (id: string, text: string) => void;
   applyTorrentReady: (e: TorrentReadyEvent) => void;
-  dismissTorrent: () => void;
+  dismissTorrent: (jobId: string) => void;
   /** Applies a drag-and-drop reordering (ids in their new display order). */
   applyOrder: (ids: string[]) => void;
   removeJob: (id: string) => void;
@@ -35,7 +43,6 @@ type QueueState = {
 async function notifyOnTerminal(
   status: StateEvent["status"],
   title: string | null,
-  error: string | null,
 ): Promise<void> {
   if (!isTauri() || (status !== "completed" && status !== "failed")) return;
   const { useSettingsStore } = await import("@/stores/settings");
@@ -48,7 +55,7 @@ async function notifyOnTerminal(
       if (!(await requestPermission())) return;
     }
     const { t } = await import("@/lib/i18n");
-    const body = [title, error].filter(Boolean).join("\n");
+    const body = title ?? undefined;
     sendNotification({
       title: status === "completed" ? t("toasts.downloadCompleted") : t("toasts.downloadFailed"),
       body,
@@ -66,20 +73,39 @@ export const useQueueStore = create<QueueState>((set, get) => ({
   jobs: new Map(),
   order: [],
   connected: false,
+  slots: null,
   activity: new Map(),
   torrentReady: null,
+  pendingTorrents: [],
+  pendingActions: new Set(),
+
+  setActionPending: (id, pending) => {
+    const { pendingActions } = get();
+    if (pendingActions.has(id) === pending) return false;
+    const next = new Set(pendingActions);
+    if (pending) next.add(id);
+    else next.delete(id);
+    set({ pendingActions: next });
+    return true;
+  },
 
   hydrate: async () => {
+    const before = get().jobs;
     try {
       const jobs = await listJobs();
       const current = get();
-      const map = new Map(current.jobs);
+      const map = new Map<string, JobView>();
       for (const job of jobs) {
-        const live = map.get(job.id);
-        map.set(job.id, live ? { ...job, ...live } : job);
+        const live = current.jobs.get(job.id);
+        if (!live && before.has(job.id)) continue;
+        map.set(job.id, live && live !== before.get(job.id)
+          ? { ...live, url: job.url, folder: live.folder ?? job.folder, createdAt: job.createdAt }
+          : job);
       }
-      const snapshotOrder = jobs.map((job) => job.id);
-      const order = [...snapshotOrder, ...current.order.filter((id) => !map.has(id))];
+      for (const [id, job] of current.jobs) {
+        if (!map.has(id) && job !== before.get(id)) map.set(id, job);
+      }
+      const order = [...map.keys()];
       set({ jobs: map, order, connected: true });
     } catch {
       set({ connected: false });
@@ -94,9 +120,13 @@ export const useQueueStore = create<QueueState>((set, get) => ({
     next.set(e.id, {
       ...existing,
       downloadedBytes: e.downloadedBytes,
-      totalBytes: e.totalBytes ?? existing.totalBytes,
+      totalBytes: e.totalBytes,
+      fraction: e.fraction,
       speed: e.speed,
       eta: e.eta,
+      connections: e.connections ?? null,
+      seeders: e.seeders ?? null,
+      uploadSpeed: e.uploadSpeed ?? null,
     });
     set({ jobs: next, order: order.length ? order : [...next.keys()] });
   },
@@ -113,6 +143,13 @@ export const useQueueStore = create<QueueState>((set, get) => ({
         engine: e.engine,
         error: e.error,
         title: e.title ?? existing.title,
+        folder: e.folder,
+        filename: e.filename,
+        thumbnail: e.thumbnail,
+        torrentPhase: e.torrentPhase,
+        canRetry: e.canRetry,
+        retryNeedsTorrent: e.retryNeedsTorrent,
+        errorCode: e.errorCode,
       });
       const activity = new Map(get().activity);
       if (["completed", "failed", "canceled"].includes(e.status)) activity.delete(e.id);
@@ -122,7 +159,7 @@ export const useQueueStore = create<QueueState>((set, get) => ({
           toast.success(`${t("toasts.downloadCompleted")} — ${e.title}`),
         );
       }
-      void notifyOnTerminal(e.status, e.title ?? existing.title, e.error);
+      void notifyOnTerminal(e.status, e.title ?? existing.title);
     } else if (e.title !== null) {
       // New job announced before listJobs saw it.
       const next = new Map(jobs);
@@ -132,12 +169,18 @@ export const useQueueStore = create<QueueState>((set, get) => ({
         engine: e.engine,
         url: "",
         title: e.title,
-        folder: null,
-        filename: null,
+        folder: e.folder,
+        filename: e.filename,
+        thumbnail: e.thumbnail,
+        torrentPhase: e.torrentPhase,
+        canRetry: e.canRetry,
+        retryNeedsTorrent: e.retryNeedsTorrent,
+        errorCode: e.errorCode,
         status: e.status,
         error: e.error,
         downloadedBytes: 0,
         totalBytes: null,
+        fraction: null,
         speed: 0,
         eta: 0,
         createdAt: Date.now(),
@@ -153,10 +196,23 @@ export const useQueueStore = create<QueueState>((set, get) => ({
   },
 
   applyTorrentReady: (e) => {
-    set({ torrentReady: e });
+    const { torrentReady, pendingTorrents } = get();
+    if (!torrentReady || torrentReady.jobId === e.jobId) {
+      set({ torrentReady: e });
+    } else if (!pendingTorrents.some(({ jobId }) => jobId === e.jobId)) {
+      set({ pendingTorrents: [...pendingTorrents, e] });
+    }
   },
 
-  dismissTorrent: () => set({ torrentReady: null }),
+  dismissTorrent: (jobId) => {
+    const { torrentReady, pendingTorrents } = get();
+    const remaining = pendingTorrents.filter((entry) => entry.jobId !== jobId);
+    if (torrentReady?.jobId === jobId) {
+      set({ torrentReady: remaining[0] ?? null, pendingTorrents: remaining.slice(1) });
+    } else {
+      set({ pendingTorrents: remaining });
+    }
+  },
 
   applyOrder: (ids) => {
     const { jobs, order } = get();
@@ -165,7 +221,7 @@ export const useQueueStore = create<QueueState>((set, get) => ({
       ...order.filter((id) => !ids.includes(id)),
     ];
     set({ order: next });
-    void setJobOrder(next).catch(() => undefined);
+    orderWrite = orderWrite.then(() => setJobOrder(next)).catch(() => undefined);
   },
 
   removeJob: (id) => {
@@ -177,6 +233,7 @@ export const useQueueStore = create<QueueState>((set, get) => ({
   attach: async () => {
     if (!isTauri()) return () => undefined;
     const listeners: UnlistenFn[] = await Promise.all([
+      listen<QueueSlots>("queue://slots", (e) => set({ slots: e.payload })),
       listen<ProgressEvent>("job://progress", (e) => get().applyProgress(e.payload)),
       listen<StateEvent>("job://state", (e) => get().applyState(e.payload)),
       listen<TorrentReadyEvent>("torrent://ready", (e) => get().applyTorrentReady(e.payload)),
@@ -185,7 +242,13 @@ export const useQueueStore = create<QueueState>((set, get) => ({
       ),
     ]);
     set({ connected: true });
-    await get().hydrate();
+    const previousSlots = get().slots;
+    await Promise.all([
+      get().hydrate(),
+      queueSlots().then((slots) => {
+        if (get().slots === previousSlots) set({ slots });
+      }).catch(() => undefined),
+    ]);
     let active = true;
     return () => {
       if (!active) return;

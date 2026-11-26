@@ -9,6 +9,7 @@ export default {
         bg: "var(--bg)",
         surface: "var(--surface)",
         "surface-2": "var(--surface-2)",
+        "surface-2-opaque": "var(--surface-2-opaque)",
         "surface-3": "var(--surface-3)",
         border: {
           DEFAULT: "var(--border)",

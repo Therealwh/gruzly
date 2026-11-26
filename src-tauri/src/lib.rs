@@ -139,9 +139,12 @@ pub fn run() {
             commands::select_torrent_files,
             commands::pause_job,
             commands::resume_job,
+            commands::retry_job,
             commands::cancel_job,
             commands::remove_job,
             commands::list_jobs,
+            commands::queue_slots,
+            commands::open_completed_download,
             commands::list_history,
             commands::delete_history_record,
             commands::check_files_exist,
@@ -177,6 +180,8 @@ pub fn run() {
             });
 
             let handle = app.handle().clone();
+            app.state::<QueueManager>()
+                .emit_slot_changes(handle.clone());
             let _ = app.state::<AppState>().db.mark_interrupted();
             tray::build_tray(&handle, "en").expect("build tray");
 

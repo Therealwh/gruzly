@@ -3,21 +3,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button, EmptyState, Input, InputIcon, Textarea, toast } from "@/components/ui";
 import { CommandError, startFileDownload, startTorrent } from "@/lib/api";
+import { torrentFileToBase64 } from "@/lib/torrentFile";
 import { parseUrlKind, splitBatchInput } from "@/lib/urls";
 import { useAnalysisStore } from "@/stores/analysis";
 import { useSettingsStore } from "@/stores/settings";
-
-/** Reads a local .torrent file as base64 for aria2.addTorrent. */
-const MAX_TORRENT_BYTES = 10 * 1024 * 1024;
-
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
-    reader.onerror = () => reject(new Error("torrent read failed"));
-    reader.readAsDataURL(file);
-  });
-}
 
 /**
  * Files & torrents: direct HTTP/FTP downloads, magnet links, .torrent files,
@@ -91,7 +80,7 @@ export function Files() {
       if (!url.trim()) return;
       void addOne(url.trim()).then((ok) => {
         if (ok) {
-          toast.success(t("toasts.downloadStarted"));
+          if (parseUrlKind(url.trim()) !== "magnet") toast.success(t("toasts.downloadStarted"));
           setUrl("");
         }
       });
@@ -100,13 +89,9 @@ export function Files() {
 
   const onTorrentFile = useCallback(
     async (file: File) => {
-      if (file.size > MAX_TORRENT_BYTES) {
-        toast.error(t("errors.generic"));
-        return;
-      }
       const folder = useSettingsStore.getState().downloadFolder || null;
       try {
-        const b64 = await fileToBase64(file);
+        const b64 = await torrentFileToBase64(file);
         await startTorrent({ torrentBase64: b64 }, folder);
         toast.info(t("files.torrent.pickingHint"));
       } catch (e) {

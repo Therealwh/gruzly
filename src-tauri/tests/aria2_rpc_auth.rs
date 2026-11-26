@@ -61,7 +61,36 @@ async fn rpc_requires_secret_and_accepts_correct_secret() {
     );
     assert!(authorized["result"]["version"].is_string());
 
+    let error = daemon
+        .tell_status("0000000000000001")
+        .await
+        .expect_err("unknown task should fail")
+        .to_string();
+    assert!(error.contains("tellStatus:"), "{error}");
+    assert!(error.contains("is not found"), "{error}");
+
     daemon.shutdown().await.expect("shutdown aria2c");
+    assert!(!daemon.is_running().await.expect("check stopped daemon"));
+    assert!(matches!(
+        daemon.version().await,
+        Err(gruzly_lib::core::aria2::Aria2Error::Transport("getVersion"))
+    ));
+
+    let replacement = Aria2Daemon::spawn(&binary, temp.path().to_path_buf())
+        .await
+        .expect("restart aria2c");
+    assert!(replacement
+        .is_running()
+        .await
+        .expect("check replacement daemon"));
+    replacement
+        .version()
+        .await
+        .expect("replacement RPC responds");
+    replacement
+        .shutdown()
+        .await
+        .expect("shutdown replacement aria2c");
 }
 
 // Keep the integration test independent of the app's runtime filesystem.

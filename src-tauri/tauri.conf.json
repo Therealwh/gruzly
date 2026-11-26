@@ -75,6 +75,11 @@
     }
   },
   "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["gruzly"]
+      }
+    },
     "updater": {
       "endpoints": [
         "https://github.com/Therealwh/gruzly/releases/latest/download/latest.json"

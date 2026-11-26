@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { CommandPalette, useGlobalHotkeys } from "@/components/layout/CommandPalette";
 import { Header } from "@/components/layout/Header";
@@ -7,6 +7,7 @@ import { TitleBar } from "@/components/layout/TitleBar";
 import { UpdateBanner } from "@/components/layout/UpdateBanner";
 import { TooltipProvider, Toaster } from "@/components/ui";
 import { setTrayLanguage } from "@/lib/api";
+import { attachIncomingLinks } from "@/lib/incoming";
 import { TorrentModal } from "@/features/files/TorrentModal";
 import { isPageId, type PageId } from "@/lib/navigation";
 import { About } from "@/pages/About";
@@ -57,6 +58,18 @@ export default function App() {
       void detachPromise.then((detach) => detach());
     };
   }, [attach, hydrateSettings]);
+
+  // Browser handoff (gruzly://) and CLI args arrive as events; keep the
+  // latest navigate function without re-subscribing on every render.
+  const navigateRef = useRef(navigate);
+  navigateRef.current = navigate;
+  useEffect(() => {
+    let detach: (() => void) | undefined;
+    void attachIncomingLinks((page) => navigateRef.current(page)).then((fn) => {
+      detach = fn;
+    });
+    return () => detach?.();
+  }, []);
 
   // Tray menu follows the UI language.
   useEffect(() => {

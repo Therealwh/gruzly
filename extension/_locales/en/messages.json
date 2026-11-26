@@ -1,0 +1,50 @@
+{
+  "extName": {
+    "message": "Gruzly",
+    "description": "Extension name."
+  },
+  "extDescription": {
+    "message": "Send links, pages and videos to the Gruzly desktop app.",
+    "description": "Extension description shown in the browser."
+  },
+  "actionTitle": {
+    "message": "Open in Gruzly",
+    "description": "Tooltip of the toolbar button."
+  },
+  "contextMenuTitle": {
+    "message": "Download in Gruzly",
+    "description": "Title of the link, page and video context menu items."
+  },
+  "popupTitle": {
+    "message": "Gruzly",
+    "description": "Popup heading and document title."
+  },
+  "popupUrlLabel": {
+    "message": "Current page",
+    "description": "Label above the current tab URL."
+  },
+  "popupOpen": {
+    "message": "Open in Gruzly",
+    "description": "Primary popup button."
+  },
+  "popupHint": {
+    "message": "Gruzly must be installed. It registers the gruzly:// link on first launch.",
+    "description": "Hint shown at the bottom of the popup."
+  },
+  "popupUnsupported": {
+    "message": "Only http and https pages can be sent to Gruzly.",
+    "description": "Shown when the active tab is not a web page."
+  },
+  "popupNoUrl": {
+    "message": "No page URL available.",
+    "description": "Shown when the URL of the active tab cannot be read."
+  },
+  "popupOpening": {
+    "message": "Opening Gruzly…",
+    "description": "Status after the popup hands the URL to the app."
+  },
+  "popupError": {
+    "message": "Could not open Gruzly. Check that the app is installed.",
+    "description": "Status when the link click failed."
+  }
+}

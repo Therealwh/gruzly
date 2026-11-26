@@ -192,6 +192,11 @@ pub fn queue_slots(queue: State<'_, QueueManager>) -> QueueSlots {
 }
 
 #[tauri::command]
+pub fn take_pending_links(app: tauri::AppHandle) -> Vec<String> {
+    crate::core::links::take_pending(&app)
+}
+
+#[tauri::command]
 pub async fn open_completed_download(
     queue: State<'_, QueueManager>,
     id: String,

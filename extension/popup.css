@@ -1,0 +1,111 @@
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --fg: #1b1b1f;
+  --muted: #6b6b76;
+  --border: #d9d9e0;
+  --surface: #f6f6f8;
+  --accent: #2f6feb;
+  --accent-fg: #ffffff;
+  --danger: #c0392b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17171a;
+    --fg: #ececf1;
+    --muted: #a0a0ab;
+    --border: #34343c;
+    --surface: #202027;
+    --accent: #6c9bff;
+    --accent-fg: #0b0b0d;
+    --danger: #ff8a80;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  width: 320px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 14px 12px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.label {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.url {
+  margin: 0;
+  padding: 7px 9px;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.primary {
+  padding: 9px 12px;
+  appearance: none;
+  background: var(--accent);
+  border: 0;
+  border-radius: 6px;
+  color: var(--accent-fg);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+}
+
+.primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.primary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.primary:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.status {
+  min-height: 1.45em;
+  margin: 0;
+  color: var(--muted);
+}
+
+.status[data-tone="error"] {
+  color: var(--danger);
+}
+
+.hint {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}

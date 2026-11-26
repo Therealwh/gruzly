@@ -28,6 +28,10 @@ pub struct AppState {
     pub engine_auto_update: std::sync::atomic::AtomicBool,
     /// Prevents tray quit and RunEvent::Exit from shutting down twice.
     pub shutdown_started: std::sync::atomic::AtomicBool,
+    /// Links that arrived before the webview could listen.
+    pub pending_links: std::sync::Mutex<Vec<String>>,
+    /// Last delivered link and when it arrived, to collapse duplicate reports.
+    pub recent_link: std::sync::Mutex<Option<(String, std::time::Instant)>>,
 }
 
 /// Fire-and-forget yt-dlp self-update at startup: extractors break
@@ -109,14 +113,17 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // A second launch focuses the existing window instead.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // A second launch focuses the existing window; its arguments may
+            // carry a gruzly:// link or a plain URL from the browser or CLI.
+            crate::core::links::deliver(app, crate::core::links::urls_from_args(args));
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
                 let _ = window.unminimize();
                 let _ = window.set_focus();
             }
         }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -144,6 +151,7 @@ pub fn run() {
             commands::remove_job,
             commands::list_jobs,
             commands::queue_slots,
+            commands::take_pending_links,
             commands::open_completed_download,
             commands::list_history,
             commands::delete_history_record,
@@ -177,9 +185,37 @@ pub fn run() {
                 close_to_tray: std::sync::atomic::AtomicBool::new(true),
                 engine_auto_update: std::sync::atomic::AtomicBool::new(auto_update),
                 shutdown_started: std::sync::atomic::AtomicBool::new(false),
+                pending_links: std::sync::Mutex::new(Vec::new()),
+                recent_link: std::sync::Mutex::new(None),
             });
 
             let handle = app.handle().clone();
+            // Browser handoff: Windows and Linux register the scheme per user
+            // at runtime, macOS gets it from Info.plist at build time.
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                #[cfg(any(windows, target_os = "linux"))]
+                if let Err(error) = app.deep_link().register(core::links::SCHEME) {
+                    log::warn!("could not register the gruzly:// scheme: {error}");
+                }
+                let link_app = handle.clone();
+                app.deep_link().on_open_url(move |event| {
+                    let urls = event
+                        .urls()
+                        .into_iter()
+                        .map(|url| url.to_string())
+                        .collect();
+                    core::links::deliver(&link_app, urls);
+                });
+                if let Ok(Some(urls)) = app.deep_link().get_current() {
+                    let urls = urls.into_iter().map(|url| url.to_string()).collect();
+                    core::links::deliver(&handle, urls);
+                }
+                core::links::deliver(
+                    &handle,
+                    core::links::urls_from_args(std::env::args().skip(1)),
+                );
+            }
             app.state::<QueueManager>()
                 .emit_slot_changes(handle.clone());
             let _ = app.state::<AppState>().db.mark_interrupted();

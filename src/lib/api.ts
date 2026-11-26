@@ -205,6 +205,11 @@ export async function queueSlots(): Promise<QueueSlots> {
   return call<QueueSlots>("queue_slots");
 }
 
+/** Links that arrived through gruzly:// or the CLI before the UI was ready. */
+export async function takePendingLinks(): Promise<string[]> {
+  return call<string[]>("take_pending_links");
+}
+
 export async function cancelJob(id: string): Promise<void> {
   return call<void>("cancel_job", { id });
 }

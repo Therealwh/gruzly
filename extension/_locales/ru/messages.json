@@ -1,0 +1,50 @@
+{
+  "extName": {
+    "message": "Gruzly",
+    "description": "Название расширения."
+  },
+  "extDescription": {
+    "message": "Отправляйте ссылки, страницы и видео в приложение Gruzly.",
+    "description": "Описание расширения в браузере."
+  },
+  "actionTitle": {
+    "message": "Открыть в Gruzly",
+    "description": "Подсказка на кнопке панели инструментов."
+  },
+  "contextMenuTitle": {
+    "message": "Скачать в Gruzly",
+    "description": "Заголовок пунктов меню для ссылки, страницы и видео."
+  },
+  "popupTitle": {
+    "message": "Gruzly",
+    "description": "Заголовок окна расширения."
+  },
+  "popupUrlLabel": {
+    "message": "Текущая страница",
+    "description": "Подпись над адресом активной вкладки."
+  },
+  "popupOpen": {
+    "message": "Открыть в Gruzly",
+    "description": "Основная кнопка окна расширения."
+  },
+  "popupHint": {
+    "message": "Приложение Gruzly должно быть установлено. Оно регистрирует ссылку gruzly:// при первом запуске.",
+    "description": "Подсказка в нижней части окна расширения."
+  },
+  "popupUnsupported": {
+    "message": "В Gruzly можно отправить только страницы http и https.",
+    "description": "Показывается, если активная вкладка — не веб-страница."
+  },
+  "popupNoUrl": {
+    "message": "Адрес страницы недоступен.",
+    "description": "Показывается, если адрес активной вкладки прочитать нельзя."
+  },
+  "popupOpening": {
+    "message": "Открываем Gruzly…",
+    "description": "Статус после передачи адреса приложению."
+  },
+  "popupError": {
+    "message": "Не удалось открыть Gruzly. Проверьте, что приложение установлено.",
+    "description": "Статус, если нажатие по ссылке не сработало."
+  }
+}

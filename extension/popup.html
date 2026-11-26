@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Gruzly</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="card">
+      <h1 data-i18n="popupTitle">Gruzly</h1>
+
+      <p class="label" data-i18n="popupUrlLabel">Current page</p>
+      <p id="page-url" class="url" dir="ltr">&nbsp;</p>
+
+      <button id="open" class="primary" type="button" data-i18n="popupOpen">
+        Open in Gruzly
+      </button>
+
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+      <p class="hint" data-i18n="popupHint">
+        Gruzly must be installed. It registers the gruzly:// link on first launch.
+      </p>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

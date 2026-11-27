@@ -1,8 +1,17 @@
-<!-- health result=unknown version=unknown checked=1970-01-01T00:00:00Z -->
+<!-- health result=success version=0.3.7 checked=2026-11-27T11:01:22.774Z -->
 # Release health
 
-**Waiting for the first check** — this file is rewritten by the hourly
-[Health](https://github.com/Therealwh/gruzly/actions/workflows/health.yml)
-workflow. It verifies that the latest release is published, carries every
-expected asset, serves a signed `latest.json`, answers on the updater endpoint
-and downloads the Windows installer.
+**Passing** — last checked 2026-11-27 11:01 UTC on release 0.3.7.
+
+| | |
+|---|---|
+| Result | ✅ Passing |
+| Release | 0.3.7 |
+| Last check | 2026-11-27 11:01 UTC |
+| Workflow run | [Actions](https://github.com/Therealwh/gruzly/actions/runs/45986955156) |
+
+Checked every hour by [Health](https://github.com/Therealwh/gruzly/actions/workflows/health.yml):
+the latest release is published, carries every expected asset, serves a signed `latest.json` for all platforms, answers on the updater endpoint, and the Windows installer downloads.
+
+This file is generated — edit the workflow or `scripts/check-release.mjs`
+instead of changing it by hand.

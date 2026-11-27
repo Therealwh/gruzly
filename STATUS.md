@@ -1,14 +1,14 @@
-<!-- health result=success version=0.3.7 checked=2026-11-27T12:30:47.105Z -->
+<!-- health result=success version=0.3.7 checked=2026-11-27T12:32:51.967Z -->
 # Release health
 
-**Passing** — last checked 2026-11-27 12:30 UTC on release 0.3.7.
+**Passing** — last checked 2026-11-27 12:32 UTC on release 0.3.7.
 
 | | |
 |---|---|
 | Result | ✅ Passing |
 | Release | 0.3.7 |
-| Last check | 2026-11-27 12:30 UTC |
-| Workflow run | [Actions](https://github.com/Therealwh/gruzly/actions/runs/45999235858) |
+| Last check | 2026-11-27 12:32 UTC |
+| Workflow run | [Actions](https://github.com/Therealwh/gruzly/actions/runs/45999535071) |
 
 Checked every hour by [Health](https://github.com/Therealwh/gruzly/actions/workflows/health.yml):
 the latest release is published, carries every expected asset, serves a signed `latest.json` for all platforms, answers on the updater endpoint, and the Windows installer downloads.

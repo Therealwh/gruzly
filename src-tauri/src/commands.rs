@@ -5,6 +5,7 @@ use tauri::State;
 
 use crate::core::db::HistoryRecord;
 use crate::core::engines::{self, EngineInfo};
+use crate::core::extension::{self, BrowserOption};
 use crate::core::queue::{
     self, JobView, QueueManager, QueueSlots, TorrentReadyEvent, TorrentSource,
 };
@@ -52,6 +53,35 @@ pub async fn get_engine_info(app: tauri::AppHandle) -> Result<Vec<EngineInfo>, S
     tokio::task::spawn_blocking(move || engines::probe_all(&app))
         .await
         .map_err(|e| format!("probe task failed: {e}"))
+}
+
+#[derive(Serialize)]
+pub struct ExtensionInfo {
+    /// Absolute path of the bundled unpacked extension, when present.
+    pub path: Option<String>,
+    pub browsers: Vec<BrowserOption>,
+}
+
+#[tauri::command]
+pub fn extension_info(app: tauri::AppHandle) -> ExtensionInfo {
+    ExtensionInfo {
+        path: extension::extension_dir(&app).map(|dir| dir.to_string_lossy().into_owned()),
+        browsers: extension::detect_browsers(),
+    }
+}
+
+/// Opens the selected browser's extensions page. The install itself stays
+/// manual: browsers require developer mode plus picking the folder.
+#[tauri::command]
+pub fn open_extension_setup(app: tauri::AppHandle, browser: String) -> CmdResult<()> {
+    if extension::extension_dir(&app).is_none() {
+        return Err(CommandError::of(
+            extension::EXTENSION_MISSING,
+            "bundled extension folder not found",
+        ));
+    }
+    extension::open_extensions_page(&browser)
+        .map_err(|code| CommandError::of(&code, "could not open the browser extensions page"))
 }
 
 #[tauri::command]

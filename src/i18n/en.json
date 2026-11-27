@@ -427,6 +427,47 @@
       }
     }
   },
+  "extension": {
+    "title": "Browser extension",
+    "hint": "Send the page you're on, a link or a video to Gruzly straight from your browser",
+    "button": "Install extension",
+    "intro": {
+      "description": "The extension hands the current page, a link or a video to Gruzly. Everything runs locally on your computer — no account, no cloud.",
+      "browser": "Browser",
+      "notDetected": "not detected",
+      "loading": "Looking for installed browsers…",
+      "install": "Install",
+      "installing": "Opening…",
+      "noBrowser": "No supported browser was found. Install Chrome, Edge, Brave, Vivaldi, Opera or Firefox, then reopen this window.",
+      "missingFolder": "The extension folder is missing from this build. Reinstall Gruzly or use the portable build.",
+      "devModeNote": "Browsers don't let other apps install an unpacked extension silently. You'll turn on developer mode and pick the Gruzly folder yourself — the exact steps appear after you press Install."
+    },
+    "steps": {
+      "title": "Finish the install in your browser",
+      "copiedNote": "The folder path is already on your clipboard — paste it into the browser's file picker.",
+      "path": "Extension folder",
+      "openPage": "Open extensions page",
+      "copyPath": "Copy path",
+      "done": "Done",
+      "manualHint": "Page didn't open? Open your browser's extensions page manually and follow the steps.",
+      "chromium": {
+        "one": "On the page that just opened, turn on Developer mode.",
+        "two": "Click “Load unpacked”.",
+        "three": "Select the folder below.",
+        "four": "Pin Gruzly and click its icon on any page to send the link."
+      },
+      "firefox": {
+        "one": "On the page that just opened, click “Load Temporary Add-on…”.",
+        "two": "Open the folder below and select manifest.json.",
+        "three": "Temporary add-ons disappear when Firefox restarts — a permanent install needs signing on addons.mozilla.org."
+      }
+    },
+    "errors": {
+      "browserNotFound": "That browser couldn't be found. Pick another one or open its extensions page manually.",
+      "extensionMissing": "The bundled extension folder wasn't found. Reinstall Gruzly or use the portable build.",
+      "loadFailed": "Couldn't read the extension info. Close and reopen this window to try again."
+    }
+  },
   "about": {
     "title": "About Gruzly",
     "version": "Version",

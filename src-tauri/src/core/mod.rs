@@ -2,6 +2,7 @@ pub mod archive;
 pub mod aria2;
 pub mod db;
 pub mod engines;
+pub mod extension;
 pub mod links;
 pub mod queue;
 pub mod torrent;

@@ -20,6 +20,7 @@ import {
   toast,
 } from "@/components/ui";
 import { getEngineInfo, updateYtdlp, type EngineInfo } from "@/lib/api";
+import { ExtensionModal } from "@/features/extension/ExtensionModal";
 import { LANGUAGES } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { useUiStore, type AccentColor, type Density, type ThemeMode } from "@/stores/ui";
@@ -466,6 +467,7 @@ function EnginesSection() {
 function IntegrationsSection() {
   const { t } = useTranslation();
   const settings = useSettingsStore();
+  const [extensionOpen, setExtensionOpen] = useState(false);
 
   return (
     <>
@@ -577,6 +579,15 @@ function IntegrationsSection() {
           </Row>
         )}
       </Card>
+      <Card title={t("extension.title")}>
+        <Row hint={t("extension.hint")}>
+          <Button variant="gradient" onClick={() => setExtensionOpen(true)}>
+            <Puzzle className="h-3.5 w-3.5" aria-hidden />
+            {t("extension.button")}
+          </Button>
+        </Row>
+      </Card>
+      <ExtensionModal open={extensionOpen} onOpenChange={setExtensionOpen} />
     </>
   );
 }

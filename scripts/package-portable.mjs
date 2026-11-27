@@ -1,6 +1,6 @@
 // Assembles a portable distribution: Gruzly.exe + sidecar engines in one
 // folder, zipped. Run after `npx tauri build` (release profile).
-import { existsSync, mkdirSync, copyFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, copyFileSync, cpSync, readdirSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,6 +33,17 @@ for (const prefix of ["yt-dlp", "aria2c", "ffmpeg"]) {
 }
 copyFileSync(join(ROOT, "LICENSE"), join(OUT, "LICENSE"));
 copyFileSync(join(ROOT, "THIRD_PARTY_NOTICES.md"), join(OUT, "THIRD_PARTY_NOTICES.md"));
+
+// The browser extension ships next to the exe in <resource_dir>/extension,
+// exactly where the app looks for it at runtime.
+const extensionSrc = join(ROOT, "extension");
+if (!existsSync(join(extensionSrc, "manifest.json"))) {
+  throw new Error("portable package: extension/manifest.json not found");
+}
+cpSync(extensionSrc, join(OUT, "extension"), { recursive: true });
+if (!existsSync(join(OUT, "extension", "manifest.json"))) {
+  throw new Error("portable package missing browser extension");
+}
 
 const zip = join(ROOT, "portable", "Gruzly-portable-win64.zip");
 rmSync(zip, { force: true });

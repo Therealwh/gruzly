@@ -19,6 +19,18 @@ export type EngineInfo = {
   source: "bundled" | "path" | null;
 };
 
+export type BrowserOption = {
+  id: string;
+  name: string;
+  available: boolean;
+};
+
+export type ExtensionInfo = {
+  /** Absolute path of the bundled extension folder, null when missing. */
+  path: string | null;
+  browsers: BrowserOption[];
+};
+
 export type VideoMeta = {
   id: string;
   title: string;
@@ -124,6 +136,16 @@ export async function getAppInfo(): Promise<AppInfo> {
 
 export async function getEngineInfo(): Promise<EngineInfo[]> {
   return call<EngineInfo[]>("get_engine_info");
+}
+
+/** Bundled extension folder path and the browsers detected on this machine. */
+export async function extensionInfo(): Promise<ExtensionInfo> {
+  return call<ExtensionInfo>("extension_info");
+}
+
+/** Opens the browser's extensions page; the install itself stays manual. */
+export async function openExtensionSetup(browser: string): Promise<void> {
+  return call<void>("open_extension_setup", { browser });
 }
 
 export async function analyzeUrl(url: string): Promise<Analysis> {

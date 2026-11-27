@@ -1,7 +1,7 @@
 {
   "name": "gruzly",
   "private": true,
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "Gruzly — a beautiful cross-platform download manager: files, torrents and video from 1000+ sites",
   "type": "module",
   "scripts": {
@@ -28,6 +28,7 @@
     "@tanstack/react-virtual": "^3.10.8",
     "@tauri-apps/api": "^2.1.0",
     "@tauri-apps/plugin-autostart": "^2.7.0",
+    "@tauri-apps/plugin-clipboard-manager": "^2.5.0",
     "@tauri-apps/plugin-dialog": "^2.8.4",
     "@tauri-apps/plugin-notification": "^2.8.1",
     "@tauri-apps/plugin-opener": "^2.7.3",

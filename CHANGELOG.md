@@ -3,6 +3,16 @@
 All notable changes to Gruzly are documented here. Format: Keep a Changelog,
 versioning: SemVer.
 
+## [0.3.6] — 2026-11-27
+
+### Added
+- An "Install extension" button in Settings → Integrations opens a two-step dialog: it explains what the extension does, lists the browsers found on the system, opens the right extensions page and copies the bundled folder path. Browsers require developer mode for unpacked extensions, so the dialog states that plainly instead of pretending the install is silent.
+- The extension folder now ships inside the app bundle and inside the portable archive.
+
+### Fixed
+- The Windows installer stops Gruzly's sidecars (aria2c, yt-dlp, ffmpeg) and waits for the aria2c file handle to be released, so an update no longer fails with "Error opening file for writing" when an engine process survived a crash.
+- The app starts the aria2 engine at launch, so a finished update leaves a working engine instead of waiting for the first task.
+
 ## [0.3.5] — 2026-11-27
 
 ### Added

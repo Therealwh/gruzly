@@ -9,6 +9,14 @@
   [🇬🇧 English](README.md) • [🇷🇺 Русский](README.ru.md)
 </div>
 
+# Gruzly — free download manager for Windows, macOS and Linux
+
+**Gruzly** is an open-source desktop download manager: direct files, BitTorrent
+and magnet links, and video from YouTube, Rutube, VK, Dzen and thousands of
+other sites handled by yt-dlp — in one queue, with a preview before you
+download. It is built with Rust and Tauri, ships as a native app, and is MIT
+licensed.
+
 ---
 
 [![Releases](.github/assets/badges/release.svg)](https://github.com/Therealwh/gruzly/releases)
@@ -29,6 +37,7 @@
 - [Architecture](#-architecture)
 - [Keyboard shortcuts](#%EF%B8%8F-keyboard-shortcuts)
 - [Roadmap](#-roadmap)
+- [FAQ](#-faq)
 - [Contributing](#-contributing)
 - [Legal](#%EF%B8%8F-legal)
 - [Acknowledgements](#-acknowledgements)
@@ -231,10 +240,47 @@ the Control key on every platform.
 - [x] `gruzly <url>` CLI
 - [ ] Phone remote: send a link from mobile
 
+## ❓ FAQ
+
+**Is Gruzly free?** Yes. The code is MIT licensed and there is no account,
+subscription or telemetry.
+
+**Does it download from YouTube and other video sites?** Video pages are
+analyzed by yt-dlp, previewed in the app, and downloaded in the format you
+pick. Which sites work depends on yt-dlp's current extractors; the app updates
+them at launch.
+
+**Can it download torrents and magnet links?** Yes — magnet links and local
+`.torrent` files go through aria2, with file selection before the transfer
+starts and optional seeding limits.
+
+**Does it support 4K, HDR and subtitles?** The format table shows available
+resolutions, codecs, HDR and estimated sizes; subtitles can be selected and
+embedded when the source provides them.
+
+**Is there a portable version?** Yes, `Gruzly-portable-win64.zip` for Windows.
+Settings and history stay in your user profile, so moving the folder moves the
+app but not your data.
+
+**Which systems are supported?** Windows 10/11 x64, Apple Silicon macOS and
+Linux x86-64. Intel Macs and Windows on ARM are not built yet.
+
+**Where do downloads go?** To the folder you choose in Settings. Every finished
+task can reveal its file in the system file manager.
+
+**How do updates work?** Installed builds check for signed updates under
+**About** and verify the package signature. Portable builds update by
+extracting a newer ZIP.
+
+**Is DRM supported?** No. Gruzly does not bypass copy protection.
+
 ## 🤝 Contributing
 
-PRs are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the gates and
-conventions. Good first issues are labeled `good first issue`.
+If Gruzly saves you time, a star helps other people find it. PRs are welcome —
+see [CONTRIBUTING.md](CONTRIBUTING.md) for the gates and conventions. Release
+notes live in [CHANGELOG.md](CHANGELOG.md), security reports go through
+[SECURITY.md](SECURITY.md), and questions are welcome in
+[Discussions](https://github.com/Therealwh/gruzly/discussions). Good first issues are labeled `good first issue`.
 
 <a href="https://github.com/Therealwh/gruzly/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=Therealwh/gruzly" alt="Contributors">

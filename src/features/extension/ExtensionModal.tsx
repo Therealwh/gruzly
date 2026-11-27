@@ -92,18 +92,27 @@ export function ExtensionModal({
     }
     setWorking(true);
     try {
-      await openExtensionSetup(selectedBrowser.id);
-      // The path is the next thing the browser's file picker asks for.
+      // Nothing opens here on purpose: the user reads the steps first and
+      // chooses when to bring the browser to the foreground.
       try {
         await writeText(path);
       } catch {
         /* the copy button stays available */
       }
       setStep("steps");
-    } catch (error) {
-      toast.error(describeError(error));
     } finally {
       setWorking(false);
+    }
+  };
+
+  const copyAddress = async () => {
+    const url = selectedBrowser?.extensionsUrl;
+    if (!url) return;
+    try {
+      await writeText(url);
+      toast.success(t("toasts.copiedPath"));
+    } catch {
+      toast.error(t("errors.generic"));
     }
   };
 
@@ -238,6 +247,21 @@ export function ExtensionModal({
 
           <div>
             <p className="mb-1.5 text-2xs font-medium text-text-muted">
+              {t("extension.steps.address")}
+            </p>
+            <code
+              data-selectable
+              className="block break-all rounded-lg border border-border bg-surface-2 px-3 py-2 text-2xs leading-relaxed text-text"
+            >
+              {selectedBrowser?.extensionsUrl ?? "—"}
+            </code>
+            <p className="mt-1.5 text-2xs leading-relaxed text-text-muted">
+              {t("extension.steps.pageHint")}
+            </p>
+          </div>
+
+          <div>
+            <p className="mb-1.5 text-2xs font-medium text-text-muted">
               {t("extension.steps.path")}
             </p>
             <code
@@ -251,12 +275,21 @@ export function ExtensionModal({
           <div className="flex flex-wrap gap-2">
             <Button
               size="sm"
-              variant="secondary"
+              variant="gradient"
               onClick={() => void openPage()}
               disabled={working || !selectedBrowser?.available}
             >
               <ExternalLink className="h-3.5 w-3.5" aria-hidden />
               {t("extension.steps.openPage")}
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => void copyAddress()}
+              disabled={!selectedBrowser?.extensionsUrl}
+            >
+              <Copy className="h-3.5 w-3.5" aria-hidden />
+              {t("extension.steps.copyAddress")}
             </Button>
             <Button size="sm" variant="secondary" onClick={() => void copyPath()} disabled={!path}>
               <Copy className="h-3.5 w-3.5" aria-hidden />

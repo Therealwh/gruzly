@@ -65,7 +65,7 @@ pub struct ExtensionInfo {
 #[tauri::command]
 pub fn extension_info(app: tauri::AppHandle) -> ExtensionInfo {
     ExtensionInfo {
-        path: extension::extension_dir(&app).map(|dir| dir.to_string_lossy().into_owned()),
+        path: extension::extension_dir(&app).map(|dir| crate::core::paths::display_path(&dir)),
         browsers: extension::detect_browsers(),
     }
 }

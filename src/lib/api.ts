@@ -23,6 +23,8 @@ export type BrowserOption = {
   id: string;
   name: string;
   available: boolean;
+  /** The browser's own extensions page, shown so it can be copied. */
+  extensionsUrl: string;
 };
 
 export type ExtensionInfo = {

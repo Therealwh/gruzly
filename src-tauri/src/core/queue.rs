@@ -1049,7 +1049,7 @@ pub async fn extract_archive(
         let parent = file.parent().ok_or("Download folder unavailable")?;
         let destination = unique_extract_destination(parent, &file);
         archive::extract(&file, &destination)?;
-        Ok(destination.to_string_lossy().into_owned())
+        Ok(crate::core::paths::display_path(&destination))
     })
     .await
     .map_err(|err| err.to_string())??;

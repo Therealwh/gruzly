@@ -4,6 +4,7 @@ pub mod db;
 pub mod engines;
 pub mod extension;
 pub mod links;
+pub mod paths;
 pub mod queue;
 pub mod torrent;
 pub mod tray;

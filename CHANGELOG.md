@@ -3,6 +3,16 @@
 All notable changes to Gruzly are documented here. Format: Keep a Changelog,
 versioning: SemVer.
 
+## [0.3.7] — 2026-11-27
+
+### Fixed
+- The extension dialog no longer launches the browser when you press Install. It shows the steps first and opens the browser only from the explicit "Open extensions page" button.
+- The extensions page address is displayed and can be copied, because a browser that is already running may ignore a `chrome://` URL passed on the command line.
+- Extension and extraction paths are shown without the Windows `\?\` prefix, which browsers reject when pasted into a folder picker.
+
+### Changed
+- A daily release health check now runs hourly: it verifies the published assets, the signed updater manifest, the update endpoint and the installer download.
+
 ## [0.3.6] — 2026-11-27
 
 ### Added

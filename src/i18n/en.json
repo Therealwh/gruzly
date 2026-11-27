@@ -451,16 +451,19 @@
       "done": "Done",
       "manualHint": "Page didn't open? Open your browser's extensions page manually and follow the steps.",
       "chromium": {
-        "one": "On the page that just opened, turn on Developer mode.",
-        "two": "Click “Load unpacked”.",
-        "three": "Select the folder below.",
+        "one": "Open the extensions page with the button below — or paste the address from the field into the address bar.",
+        "two": "Turn on Developer mode.",
+        "three": "Click “Load unpacked” and choose the folder below.",
         "four": "Pin Gruzly and click its icon on any page to send the link."
       },
       "firefox": {
-        "one": "On the page that just opened, click “Load Temporary Add-on…”.",
-        "two": "Open the folder below and select manifest.json.",
+        "one": "Open the debugging page with the button below — or paste the address from the field into the address bar.",
+        "two": "Click “Load Temporary Add-on…” and choose manifest.json from the folder below.",
         "three": "Temporary add-ons disappear when Firefox restarts — a permanent install needs signing on addons.mozilla.org."
-      }
+      },
+      "address": "Extensions page",
+      "copyAddress": "Copy address",
+      "pageHint": "Some browsers ignore the address when they are already open — paste it into the address bar if the tab doesn't appear."
     },
     "errors": {
       "browserNotFound": "That browser couldn't be found. Pick another one or open its extensions page manually.",

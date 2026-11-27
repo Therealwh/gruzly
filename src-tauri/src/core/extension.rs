@@ -26,6 +26,9 @@ pub struct BrowserOption {
     pub id: String,
     pub name: String,
     pub available: bool,
+    /// The browser's own extensions page, shown in the dialog so the user can
+    /// paste it when the browser ignores the command-line URL.
+    pub extensions_url: String,
 }
 
 /// Supported browsers, in the order shown to the user.
@@ -64,6 +67,7 @@ pub fn detect_browsers() -> Vec<BrowserOption> {
             id: id.to_string(),
             name: name.to_string(),
             available: browser_binary(id).is_some(),
+            extensions_url: extensions_url(id).unwrap_or_default().to_string(),
         })
         .collect()
 }
@@ -93,7 +97,7 @@ pub fn open_extensions_page(browser: &str) -> Result<(), String> {
 }
 
 /// The page that loads unpacked extensions in each browser.
-fn extensions_url(browser: &str) -> Option<&'static str> {
+pub fn extensions_url(browser: &str) -> Option<&'static str> {
     match browser {
         "chrome" | "brave" => Some("chrome://extensions/"),
         "edge" => Some("edge://extensions/"),

@@ -11,15 +11,10 @@
 
 ---
 
-[![Release](https://img.shields.io/github/v/release/Therealwh/gruzly?style=for-the-badge&logo=github&color=0ea5e9)](https://github.com/Therealwh/gruzly/releases)
-[![Downloads](https://img.shields.io/github/downloads/Therealwh/gruzly/total?style=for-the-badge&logo=github&color=10b981)](https://github.com/Therealwh/gruzly/releases)
-[![Stars](https://img.shields.io/github/stars/Therealwh/gruzly?style=for-the-badge&logo=github&color=f472b6)](https://github.com/Therealwh/gruzly/stargazers)
-[![License](https://img.shields.io/github/license/Therealwh/gruzly?style=for-the-badge&color=8b5cf6)](LICENSE)
-
-[![CI](https://img.shields.io/github/actions/workflow/status/Therealwh/gruzly/ci.yml?style=for-the-badge&logo=githubactions&logoColor=white&label=CI&color=0ea5e9)](https://github.com/Therealwh/gruzly/actions)
-![Windows](https://img.shields.io/badge/Windows-10%2B-0ea5e9?style=for-the-badge&logo=windows&logoColor=white)
-![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon-8b5cf6?style=for-the-badge&logo=apple&logoColor=white)
-![Linux](https://img.shields.io/badge/Linux-x86__64-10b981?style=for-the-badge&logo=linux&logoColor=white)
+[![Releases](.github/assets/badges/release.svg)](https://github.com/Therealwh/gruzly/releases)
+[![CI](https://github.com/Therealwh/gruzly/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Therealwh/gruzly/actions)
+[![License](.github/assets/badges/license.svg)](LICENSE)
+[![Windows](.github/assets/badges/windows.svg)](https://github.com/Therealwh/gruzly/releases) [![macOS](.github/assets/badges/macos.svg)](https://github.com/Therealwh/gruzly/releases) [![Linux](.github/assets/badges/linux.svg)](https://github.com/Therealwh/gruzly/releases)
 
 ## Содержание
 

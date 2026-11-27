@@ -243,6 +243,14 @@ pub fn run() {
                 });
 
             schedule_ytdlp_auto_update(handle.clone());
+            // Bring the torrent engine up right after launch so a finished
+            // update leaves a working engine, not just idle binaries.
+            {
+                let engine_app = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    core::queue::warm_engine(engine_app).await;
+                });
+            }
 
             // Restore unfinished downloads as paused tasks.
             {

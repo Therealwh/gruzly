@@ -1596,6 +1596,15 @@ async fn ensure_aria2(app: &AppHandle) -> Result<Arc<Aria2Daemon>, String> {
     Ok(daemon)
 }
 
+/// Starts the torrent engine at launch so an update that replaced the
+/// binaries leaves a working engine rather than waiting for the first task.
+pub async fn warm_engine(app: AppHandle) {
+    match ensure_aria2(&app).await {
+        Ok(daemon) => log::info!("aria2 engine ready on port {}", daemon.port),
+        Err(error) => log::warn!("could not start the aria2 engine at launch: {error}"),
+    }
+}
+
 fn default_title_for_url(url: &str) -> String {
     url.rsplit('/')
         .next()

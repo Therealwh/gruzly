@@ -21,6 +21,7 @@ licensed.
 
 [![Releases](.github/assets/badges/release.svg)](https://github.com/Therealwh/gruzly/releases)
 [![CI](https://github.com/Therealwh/gruzly/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Therealwh/gruzly/actions)
+[![Health](https://github.com/Therealwh/gruzly/actions/workflows/health.yml/badge.svg?branch=main)](https://github.com/Therealwh/gruzly/actions/workflows/health.yml)
 [![License](.github/assets/badges/license.svg)](LICENSE)
 [![Windows](.github/assets/badges/windows.svg)](https://github.com/Therealwh/gruzly/releases) [![macOS](.github/assets/badges/macos.svg)](https://github.com/Therealwh/gruzly/releases) [![Linux](.github/assets/badges/linux.svg)](https://github.com/Therealwh/gruzly/releases)
 

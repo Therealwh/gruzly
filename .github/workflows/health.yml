@@ -1,0 +1,27 @@
+name: Health
+
+# Daily check that the published release is complete, downloadable and
+# updatable. This is a real smoke test, not activity for its own sake:
+# GitHub Actions must be used for the project's build and verification.
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Release is installable
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify the latest release and updater manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/check-release.mjs

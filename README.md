@@ -25,6 +25,8 @@ licensed.
 [![License](.github/assets/badges/license.svg)](LICENSE)
 [![Windows](.github/assets/badges/windows.svg)](https://github.com/Therealwh/gruzly/releases) [![macOS](.github/assets/badges/macos.svg)](https://github.com/Therealwh/gruzly/releases) [![Linux](.github/assets/badges/linux.svg)](https://github.com/Therealwh/gruzly/releases)
 
+[Release status](STATUS.md) · [Changelog](CHANGELOG.md) · [Security](SECURITY.md) · [Discussions](https://github.com/Therealwh/gruzly/discussions)
+
 ## Contents
 
 - [Why Gruzly](#-why-gruzly)

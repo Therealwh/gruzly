@@ -1,17 +1,18 @@
 name: Health
 
-# Daily check that the published release is complete, downloadable and
-# updatable. This is a real smoke test, not activity for its own sake:
-# GitHub Actions must be used for the project's build and verification.
+# Hourly check that the published release is complete, downloadable and
+# updatable. The result is written to STATUS.md so the repository shows the
+# last check without opening Actions. Real verification, not activity for its
+# own sake.
 
 on:
   schedule:
-    # Hourly: GitHub may delay scheduled runs, so treat this as "about hourly".
+    # GitHub may delay scheduled runs, so treat this as "about hourly".
     - cron: "17 * * * *"
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   release:
@@ -23,6 +24,33 @@ jobs:
         with:
           node-version: 22
       - name: Verify the latest release and updater manifest
+        id: check
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node scripts/check-release.mjs
+      - name: Write STATUS.md
+        if: always()
+        env:
+          RESULT: ${{ steps.check.outcome }}
+          VERSION: ${{ steps.check.outputs.version }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node scripts/write-health-status.mjs
+      - name: Commit the status file
+        if: always()
+        run: |
+          if git diff --quiet -- STATUS.md; then
+            echo "Status unchanged."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add STATUS.md
+          git commit -m "chore(status): release health $(date -u '+%Y-%m-%d %H:%M UTC')"
+          for attempt in 1 2 3; do
+            if git push; then exit 0; fi
+            git pull --rebase --autostash || true
+            sleep 2
+          done
+          echo "Could not push STATUS.md" >&2
+          exit 1

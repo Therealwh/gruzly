@@ -8,6 +8,8 @@
 //   4. the updater endpoint used by the app serves the same manifest
 //   5. the Windows installer URL actually downloads
 
+import { appendFileSync } from "node:fs";
+
 const repo = process.env.GITHUB_REPOSITORY || "Therealwh/gruzly";
 const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
 const api = "https://api.github.com";
@@ -113,6 +115,10 @@ async function main() {
     else if (size < 50 * 1024 * 1024) fail(`installer is suspiciously small (${size} bytes)`);
     else pass(`installer downloads (${(size / 1024 / 1024).toFixed(1)} MiB)`);
   }
+
+  const outputFile = process.env.GITHUB_OUTPUT;
+  if (outputFile) appendFileSync(outputFile, `version=${version}
+`);
 
   if (failures.length > 0) {
     console.error(`\n${failures.length} check(s) failed`);

@@ -24,6 +24,8 @@
 [![License](.github/assets/badges/license.svg)](LICENSE)
 [![Windows](.github/assets/badges/windows.svg)](https://github.com/Therealwh/gruzly/releases) [![macOS](.github/assets/badges/macos.svg)](https://github.com/Therealwh/gruzly/releases) [![Linux](.github/assets/badges/linux.svg)](https://github.com/Therealwh/gruzly/releases)
 
+[Статус релиза](STATUS.md) · [Changelog](CHANGELOG.md) · [Security](SECURITY.md) · [Discussions](https://github.com/Therealwh/gruzly/discussions)
+
 ## Содержание
 
 - [Чем отличается](#-чем-отличается)

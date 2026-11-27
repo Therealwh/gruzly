@@ -152,11 +152,14 @@ Gruzly registers the `gruzly://` scheme on first launch — per user on Windows
 and Linux, from the app bundle on macOS — so a link can be handed to the app
 from a browser or a script.
 
-- **Browser extension.** Load the unpacked extension from
-  [`extension/`](extension/README.md) in Chrome or Edge. It adds a context-menu
-  item and a toolbar button that send the current page, link or video to
-  Gruzly. A Firefox build is produced with
-  `node extension/package-firefox.mjs`.
+- **Browser extension.** Gruzly ships the extension with the app: open
+  **Settings → Integrations → Install extension**, pick the browser found on
+  your system, and the dialog explains what it does, opens that browser's
+  extensions page and copies the folder path. Chrome, Edge, Brave, Vivaldi,
+  Opera and Firefox require developer mode for unpacked extensions, so the
+  dialog walks through those steps; a store listing is still on the roadmap.
+  The folder itself lives in [`extension/`](extension/README.md), and a Firefox
+  build is produced with `node extension/package-firefox.mjs`.
 - **Command line.** `gruzly "https://example.org/file.zip"` or
   `gruzly "magnet:?xt=..."` hands the link to the running instance; if Gruzly
   is closed, it starts and picks the link up.
@@ -179,6 +182,9 @@ from a browser or a script.
   not wired yet; the preview uses its built-in quality presets.
 - **Auto-extract** unpacks finished archives when enabled under **Settings →
   Downloads**.
+- **Updates** stop the app and its engines before replacing files — even an
+  engine process left over from a crash — and the app starts aria2 again on the
+  next launch.
 - **About** checks for signed app updates and verifies the update package
   signature. Portable builds update by extracting a newer ZIP.
 

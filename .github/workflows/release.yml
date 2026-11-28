@@ -85,7 +85,7 @@ jobs:
             bundle_args: "--target x86_64-unknown-linux-gnu --bundles deb,appimage"
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -150,7 +150,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Publish the prepared draft as latest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
